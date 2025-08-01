@@ -61,7 +61,7 @@ class SystemConfig:
     api: ApiConfig
     max_processes: int = 1
     batch_processing_size: int = 5
-    batch_processing_delay_min: int = 300
-    batch_processing_delay_max: int = 600
+    batch_processing_delay_min: int = 10
+    batch_processing_delay_max: int = 100
     min_predicted_return_pct: int = 50
     news_api_history_days: int = 400
