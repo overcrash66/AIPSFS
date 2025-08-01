@@ -15,6 +15,7 @@ from feature_engineering import FeatureEngineer
 from model import StockPredictor
 from reporter import ReportGenerator
 from utils import setup_logging, load_stock_list
+import numpy as np
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +24,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='AI-Powered Stock Forecasting System')
     
-    parser.add_argument('--stocks', type=str, default='stocks.csv',
+    parser.add_argument('--stocks', type=str, default='us_canada_stocks.xlsx',
                        help='Path to CSV file containing stock list')
     parser.add_argument('--start-date', type=str, 
                        help='Start date for analysis (YYYY-MM-DD)')
@@ -52,15 +53,13 @@ def main():
     logging.info("Starting AI Stock Forecasting System")
     
     try:
-        # Load configuration
+        # Load configuration from environment variables
         api_config = ApiConfig.from_env()
         model_config = ModelConfig()
         system_config = SystemConfig(model=model_config, api=api_config)
         
-        # Validate API keys
-        if not any([api_config.news_api_key, api_config.finnhub_api_key, 
-                    api_config.twitter_bearer_token, api_config.fred_api_key]):
-            logging.warning("No API keys configured. Some features may not work.")
+        # Validate API configuration
+        api_config.validate()
         
         # Determine date range
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else datetime.now()
@@ -78,7 +77,14 @@ def main():
         
         # Initialize components
         data_fetcher = DataFetcher(api_config, cache_enabled=not args.no_cache)
-        feature_engineer = FeatureEngineer()
+        
+        # Initialize feature engineer with API config
+        feature_engineer = FeatureEngineer(
+            news_api_history_days=system_config.news_api_history_days,
+            min_data_rows_for_training=system_config.model.min_data_rows_for_training,
+            api_config=api_config  # Pass the API config here
+        )
+        
         report_generator = ReportGenerator(args.output)
         
         # Process stocks
@@ -144,7 +150,9 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
         
         # Prepare arguments for each task
         tasks = [
-            (stock, start_date, end_date, data_fetcher, feature_engineer, system_config.model)
+            (stock, start_date, end_date, data_fetcher, 
+             feature_engineer,  # Pass the feature_engineer instance
+             system_config.model)
             for stock in batch
         ]
         
@@ -169,6 +177,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
     import tensorflow as tf
     from model import StockPredictor
     
+    # Unpack arguments
     stock, start_date, end_date, data_fetcher, feature_engineer, model_config = args
     
     # Clear TensorFlow session for each process

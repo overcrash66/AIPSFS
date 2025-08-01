@@ -6,7 +6,8 @@ import re
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
+from sklearn.preprocessing import MinMaxScaler
 
 from utils import safe_merge
 
@@ -19,11 +20,14 @@ except LookupError:
 class FeatureEngineer:
     """Handles feature engineering for stock data."""
     
-    def __init__(self):
+    def __init__(self, news_api_history_days=400, min_data_rows_for_training=160, api_config=None):
         self.vader = SentimentIntensityAnalyzer()
+        self.news_api_history_days = news_api_history_days
+        self.min_data_rows_for_training = min_data_rows_for_training
+        self.api_config = api_config
     
     def process_stock_data(self, symbol: str, df: pd.DataFrame, 
-                          start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
+                          start_date_full: datetime, end_date_full: datetime) -> pd.DataFrame:
         """Process raw stock data with all features."""
         if df.empty or 'Close' not in df.columns:
             logging.warning(f"Invalid DataFrame for {symbol}")
@@ -38,9 +42,9 @@ class FeatureEngineer:
             return None
         
         # Fetch and integrate additional data
-        df = self._integrate_news_data(df, symbol, start_date, end_date)
-        df = self._integrate_macro_data(df, start_date, end_date)
-        df = self._integrate_tweet_data(df, symbol, start_date, end_date)
+        df = self._integrate_news_data(df, symbol, start_date_full, end_date_full)
+        df = self._integrate_macro_data(df, start_date_full, end_date_full)
+        df = self._integrate_tweet_data(df, symbol, start_date_full, end_date_full)
         
         # Final cleaning and validation
         df = self._clean_and_validate(df)
@@ -55,6 +59,9 @@ class FeatureEngineer:
             return df
         
         try:
+            # Ensure Close column is numeric
+            df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+            
             # Simple Moving Averages
             df['SMA_20'] = df['Close'].rolling(window=20, min_periods=1).mean()
             df['SMA_50'] = df['Close'].rolling(window=50, min_periods=1).mean()
@@ -85,86 +92,162 @@ class FeatureEngineer:
     
     def _standardize_dates(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
         """Standardize date column and set as index."""
-        date_col = None
+        # Debug: Print current DataFrame info
+        logging.info(f"DataFrame before date standardization:")
+        logging.info(f"  Columns: {df.columns.tolist()}")
+        logging.info(f"  Index type: {type(df.index)}")
+        logging.info(f"  Index name: {df.index.name}")
+        logging.info(f"  Shape: {df.shape}")
         
+        # If the index is a DatetimeIndex, we need to preserve it
         if isinstance(df.index, pd.DatetimeIndex):
-            df = df.reset_index().rename(columns={'index': 'date'})
-            date_col = 'date'
-        elif 'Date' in df.columns:
-            date_col = 'Date'
-        elif 'date' in df.columns:
-            date_col = 'date'
+            logging.info("DataFrame already has DatetimeIndex")
+            # Make a copy of the index as a column
+            df['date'] = df.index
+            # Now we can work with it
+        else:
+            # Look for date column
+            date_col = None
+            if 'Date' in df.columns:
+                date_col = 'Date'
+                logging.info("Found 'Date' column")
+            elif 'date' in df.columns:
+                date_col = 'date'
+                logging.info("Found 'date' column")
+            else:
+                # Try to find any column that might be a date
+                for col in df.columns:
+                    if 'date' in col.lower():
+                        date_col = col
+                        logging.info(f"Found potential date column: {col}")
+                        break
+            
+            if date_col is None:
+                logging.error(f"Could not identify date column. Columns: {df.columns.tolist()}")
+                return None
+            
+            # Rename to 'date' if needed
+            if date_col != 'date':
+                df = df.rename(columns={date_col: 'date'})
+                logging.info(f"Renamed '{date_col}' to 'date'")
         
-        if not date_col:
-            logging.error(f"Could not identify date column. Columns: {df.columns.tolist()}")
-            return None
-        
-        df.rename(columns={date_col: 'date'}, inplace=True)
         try:
-            df['date'] = pd.to_datetime(df['date']).dt.date
+            # Check if already datetime
+            if pd.api.types.is_datetime64_any_dtype(df['date']):
+                logging.info("Date column is already datetime")
+                df['date'] = df['date'].dt.date
+            else:
+                logging.info("Converting date column to datetime")
+                df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.date
+            
+            # Check for NaT values after conversion
+            if df['date'].isna().any():
+                logging.warning(f"Found {df['date'].isna().sum()} NaT values after conversion")
+                df = df.dropna(subset=['date'])
+            
         except Exception as e:
             logging.error(f"Date conversion failed: {str(e)}")
             return None
         
-        return df.sort_values('date').set_index('date')
+        # Sort by date and set as index
+        df = df.sort_values('date')
+        df.set_index('date', inplace=True)
+        
+        logging.info(f"Date standardization completed. Final shape: {df.shape}")
+        return df
     
     def _integrate_news_data(self, df: pd.DataFrame, symbol: str, 
-                           start_date: datetime, end_date: datetime) -> pd.DataFrame:
+                       start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Fetch and integrate news data."""
         from data_fetcher import DataFetcher
-        from config import ApiConfig
         
-        # This is a simplified version - in practice, you'd pass the DataFetcher instance
-        api_config = ApiConfig.from_env()
-        data_fetcher = DataFetcher(api_config)
+        if not self.api_config:
+            return df
         
-        news_raw = data_fetcher.fetch_news_data(symbol, start_date, end_date)
+        data_fetcher = DataFetcher(self.api_config)
+        
+        news_end_date = end_date.date()
+        news_start_date = max(start_date.date(), news_end_date - timedelta(days=self.news_api_history_days))
+        
+        news_raw = data_fetcher.fetch_news_data(symbol, news_start_date, news_end_date)
         if news_raw.empty:
             return df
         
-        # Process news data
         news_agg = self._aggregate_news_data(news_raw)
         if news_agg.empty:
             return df
         
-        # Merge with main DataFrame
+        # Ensure both DataFrames have a 'date' column
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={df.columns[0]: 'date'})
+        
+        if 'date' not in news_agg.columns:
+            logging.error("News aggregated data missing 'date' column")
+            return df
+        
         return safe_merge(df, news_agg, on='date')
-    
+
+    def _integrate_tweet_data(self, df: pd.DataFrame, symbol: str, 
+                            start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """Fetch and integrate tweet data."""
+        from data_fetcher import DataFetcher
+        
+        if not self.api_config or not self.api_config.twitter_bearer_token:
+            return df
+        
+        data_fetcher = DataFetcher(self.api_config)
+        
+        news_end_date = end_date.date()
+        news_start_date = max(start_date.date(), news_end_date - timedelta(days=self.news_api_history_days))
+        
+        tweet_raw = data_fetcher.fetch_tweet_data(symbol, news_start_date, news_end_date)
+        if tweet_raw.empty:
+            return df
+        
+        tweet_agg = self._aggregate_tweet_data(tweet_raw)
+        if tweet_agg.empty:
+            return df
+        
+        # Ensure both DataFrames have a 'date' column
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={df.columns[0]: 'date'})
+        
+        if 'date' not in tweet_agg.columns:
+            logging.error("Tweet aggregated data missing 'date' column")
+            return df
+        
+        return safe_merge(df, tweet_agg, on='date')
+
     def _integrate_macro_data(self, df: pd.DataFrame, 
                             start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Fetch and integrate macroeconomic data."""
         from data_fetcher import DataFetcher
-        from config import ApiConfig
         
-        api_config = ApiConfig.from_env()
-        data_fetcher = DataFetcher(api_config)
+        if not self.api_config or not self.api_config.fred_api_key:
+            return df
+        
+        data_fetcher = DataFetcher(self.api_config)
         
         macro_data = data_fetcher.fetch_macro_data(start_date, end_date)
         if macro_data.empty:
             return df
         
+        # Ensure both DataFrames have a 'date' column
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = df.rename(columns={df.columns[0]: 'date'})
+        
+        if isinstance(macro_data.index, pd.DatetimeIndex):
+            macro_data = macro_data.reset_index()
+            macro_data = macro_data.rename(columns={macro_data.columns[0]: 'date'})
+        
+        if 'date' not in macro_data.columns:
+            logging.error("Macro data missing 'date' column")
+            return df
+        
         return safe_merge(df, macro_data, on='date')
-    
-    def _integrate_tweet_data(self, df: pd.DataFrame, symbol: str, 
-                            start_date: datetime, end_date: datetime) -> pd.DataFrame:
-        """Fetch and integrate tweet data."""
-        from data_fetcher import DataFetcher
-        from config import ApiConfig
-        
-        api_config = ApiConfig.from_env()
-        data_fetcher = DataFetcher(api_config)
-        
-        tweet_raw = data_fetcher.fetch_tweet_data(symbol, start_date, end_date)
-        if tweet_raw.empty:
-            return df
-        
-        # Process tweet data
-        tweet_agg = self._aggregate_tweet_data(tweet_raw)
-        if tweet_agg.empty:
-            return df
-        
-        # Merge with main DataFrame
-        return safe_merge(df, tweet_agg, on='date')
     
     def _aggregate_news_data(self, news_df: pd.DataFrame) -> pd.DataFrame:
         """Aggregate news data by date."""
@@ -283,6 +366,11 @@ class FeatureEngineer:
         # Sort by date
         df.sort_index(inplace=True)
         
+        # Ensure enough data for model training
+        if len(df) < self.min_data_rows_for_training:
+            logging.warning(f"Insufficient data after cleaning ({len(df)} rows, need at least {self.min_data_rows_for_training})")
+            return None
+        
         return df
     
     def prepare_multi_feature_data(self, data: pd.DataFrame, lookback: int) -> Tuple:
@@ -291,13 +379,23 @@ class FeatureEngineer:
             return None, None, {}, []
         
         if 'Close' not in data.columns:
+            logging.error(f"Missing 'Close' column. Available columns: {data.columns.tolist()}")
             return None, None, {}, []
         
         # Reset index to make date a column
         data_copy = data.reset_index().copy()
         
-        # Define feature columns
-        feature_cols = ['Close', 'Open', 'High', 'Low', 'Volume']
+        # Define feature columns - start with just Close
+        feature_cols = ['Close']
+        
+        # Add other price columns if available
+        for col in ['Open', 'High', 'Low', 'Volume']:
+            if col in data_copy.columns:
+                feature_cols.append(col)
+            else:
+                logging.warning(f"Column '{col}' not found in data")
+        
+        # Add available optional features
         optional_features = [
             'SMA_20', 'SMA_50', 'SMA_200', 'RSI', 'MACD', 'Signal',
             'news_sentiment', 'news_count', 'earnings_event',
@@ -313,13 +411,16 @@ class FeatureEngineer:
             if col in data_copy.columns and col not in feature_cols:
                 feature_cols.append(col)
         
+        logging.info(f"Using features: {feature_cols}")
+        
         # Select and clean data
         data_for_scaling = data_copy[feature_cols].copy()
-        data_for_scaling.fillna(method='ffill', inplace=True)
-        data_for_scaling.fillna(method='bfill', inplace=True)
+        data_for_scaling.ffill(inplace=True)
+        data_for_scaling.bfill(inplace=True)
         data_for_scaling.dropna(inplace=True)
         
         if len(data_for_scaling) < lookback + 1:
+            logging.warning(f"Insufficient data after cleaning: {len(data_for_scaling)} rows, need at least {lookback + 1}")
             return None, None, {}, feature_cols
         
         # Scale features

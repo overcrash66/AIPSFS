@@ -50,9 +50,13 @@ def process_stocks_in_parallel(stock_list, config):
         
         # Prepare arguments for each task
         tasks = [
-            (symbol, name, start_date, end_date, config.model.lookback_days, 
-             config.model.epochs, config.model.batch_size)
-            for symbol, name in batch
+            (stock, start_date, end_date, data_fetcher, 
+            FeatureEngineer(
+                news_api_history_days=system_config.news_api_history_days,
+                min_data_rows_for_training=system_config.model.min_data_rows_for_training
+            ), 
+            system_config.model, system_config.api)
+            for stock in batch
         ]
         
         # Process batch in parallel
