@@ -24,7 +24,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='AI-Powered Stock Forecasting System')
     
-    parser.add_argument('--stocks', type=str, default='us_canada_stocks.xlsx',
+    parser.add_argument('--stocks', type=str, default='stock_list.csv',
                        help='Path to CSV file containing stock list')
     parser.add_argument('--start-date', type=str, 
                        help='Start date for analysis (YYYY-MM-DD)')
@@ -68,12 +68,19 @@ def main():
         logging.info(f"Analysis period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
         
         # Load stock list
+        logging.info(f"Loading stock list from: {args.stocks}")
         stock_list = load_stock_list(args.stocks)
+        
         if not stock_list:
             logging.error("No stocks to analyze. Exiting.")
             sys.exit(1)
         
         logging.info(f"Loaded {len(stock_list)} stocks for analysis")
+        
+        # Log all stocks for verification
+        logging.info("Stocks to analyze:")
+        for i, stock in enumerate(stock_list):
+            logging.info(f"  {i+1}. {stock['symbol']} - {stock['name']}")
         
         # Initialize components
         data_fetcher = DataFetcher(api_config, cache_enabled=not args.no_cache)
@@ -82,7 +89,7 @@ def main():
         feature_engineer = FeatureEngineer(
             news_api_history_days=system_config.news_api_history_days,
             min_data_rows_for_training=system_config.model.min_data_rows_for_training,
-            api_config=api_config  # Pass the API config here
+            api_config=api_config
         )
         
         report_generator = ReportGenerator(args.output)
@@ -102,6 +109,10 @@ def main():
             sys.exit(1)
         
         logging.info(f"Successfully analyzed {len(results)} stocks")
+        
+        # Log results for each stock
+        for result in results:
+            logging.info(f"  {result['symbol']}: {result['return_pct']:.2f}% return")
         
         # Filter top performing stocks
         top_stocks = filter_top_stocks(
@@ -132,7 +143,7 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
                   data_fetcher: DataFetcher, feature_engineer: FeatureEngineer,
                   system_config: SystemConfig) -> List[Dict]:
     """Process stocks in parallel batches."""
-    from multiprocessing import Pool, cpu_count
+    from multiprocessing import Pool, cpu_count  # Import cpu_count
     import time
     import random
     from tqdm import tqdm
@@ -141,17 +152,25 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
     
     # Process in batches to avoid API rate limits
     batch_size = system_config.batch_processing_size
-    max_processes = min(system_config.max_processes, cpu_count())
+    max_processes = min(system_config.max_processes, cpu_count())  # Add parentheses here
     
     logging.info(f"Processing stocks in batches of {batch_size} using {max_processes} processes")
+    logging.info(f"Total stocks to process: {len(stock_list)}")
     
-    for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing stocks"):
+    total_batches = (len(stock_list) + batch_size - 1) // batch_size
+    logging.info(f"Total batches to process: {total_batches}")
+    
+    for batch_idx, i in enumerate(tqdm(range(0, len(stock_list), batch_size), desc="Processing stocks", total=total_batches)):
         batch = stock_list[i:i + batch_size]
+        
+        logging.info(f"Processing batch {batch_idx + 1}/{total_batches} with {len(batch)} stocks:")
+        for stock in batch:
+            logging.info(f"  - {stock['symbol']}: {stock['name']}")
         
         # Prepare arguments for each task
         tasks = [
             (stock, start_date, end_date, data_fetcher, 
-             feature_engineer,  # Pass the feature_engineer instance
+             feature_engineer, 
              system_config.model)
             for stock in batch
         ]
@@ -159,7 +178,10 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
         # Process batch in parallel
         with Pool(processes=max_processes) as pool:
             batch_results = pool.map(analyze_stock_task, tasks)
-            results.extend([r for r in batch_results if r is not None])
+            successful_results = [r for r in batch_results if r is not None]
+            results.extend(successful_results)
+        
+        logging.info(f"Batch {batch_idx + 1} completed: {len(successful_results)}/{len(batch)} stocks successful")
         
         # Random delay between batches to avoid rate limits
         if i + batch_size < len(stock_list):
@@ -170,6 +192,7 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
             logging.info(f"Waiting {delay:.1f}s before next batch...")
             time.sleep(delay)
     
+    logging.info(f"All batches completed. Total successful: {len(results)}/{len(stock_list)}")
     return results
 
 def analyze_stock_task(args: tuple) -> Optional[Dict]:

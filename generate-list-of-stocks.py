@@ -1,5 +1,5 @@
 import urllib.request
-import csv
+import pandas as pd
 
 def download_stock_list():
     # URLs for NASDAQ and NYSE stock listings
@@ -8,41 +8,44 @@ def download_stock_list():
         "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
     ]
     
-    stocks = []
+    symbols = []
+    names = []
     
     for url in urls:
         try:
             # Download and decode the data
-            response = urllib.request.urlopen(url)
-            data = response.read().decode('utf-8')
-            lines = data.splitlines()
-            
-            # Skip header and footer lines (first and last line)
-            for line in lines[1:-1]:
-                parts = line.strip().split('|')
+            with urllib.request.urlopen(url) as response:
+                data = response.read().decode('utf-8')
+                lines = data.splitlines()
                 
-                # Extract symbol and name
-                if url.endswith("nasdaqlisted.txt"):
+                # Skip header and footer lines (first and last line)
+                for line in lines[1:-1]:
+                    parts = line.strip().split('|')
+                    
+                    # Extract symbol and name
                     symbol = parts[0]
                     name = parts[1]
-                else:  # otherlisted.txt (NYSE/AMEX)
-                    symbol = parts[0]
-                    name = parts[1]
-                
-                stocks.append((symbol, name))
+                    
+                    symbols.append(symbol)
+                    names.append(name)
                 
         except Exception as e:
             print(f"Error processing {url}: {str(e)}")
     
-    return stocks
-
-def save_to_csv(stocks, filename='stock_list.csv'):
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(['symbol', 'name'])
-        writer.writerows(stocks)
-    print(f"Saved {len(stocks)} stocks to {filename}")
+    return {'symbol': symbols, 'name': names}
 
 if __name__ == "__main__":
-    stock_data = download_stock_list()
-    save_to_csv(stock_data)
+    # Download stock data
+    stocks_data = download_stock_list()
+    
+    # Create DataFrame
+    df = pd.DataFrame(stocks_data)
+    
+    # Save to CSV
+    csv_filename = 'stock_list.csv'
+    df.to_csv(csv_filename, index=False)
+    
+    # Print confirmation
+    print(f"Created {csv_filename} with {len(df)} stocks")
+    print("Sample stocks:")
+    print(df.head(10))

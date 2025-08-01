@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 import os
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
@@ -59,7 +60,7 @@ class SystemConfig:
     model: ModelConfig
     api: ApiConfig
     max_processes: int = 1
-    batch_processing_size: int = 1
+    batch_processing_size: int = 5
     batch_processing_delay_min: int = 300
     batch_processing_delay_max: int = 600
     min_predicted_return_pct: int = 50
