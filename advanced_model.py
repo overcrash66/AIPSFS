@@ -36,6 +36,7 @@ class AdvancedStockPredictor:
         self.model_dir = "models"
         self.model_type = 'Unknown'
         self.target_col = getattr(self, 'target_col', 'Close')
+        self.best_model_index = None
         
         # Create models directory if it doesn't exist
         os.makedirs(self.model_dir, exist_ok=True)
@@ -273,9 +274,7 @@ class AdvancedStockPredictor:
         
         return self.models
     
-    def train_ensemble(self, X_train: np.ndarray, y_train: np.ndarray, 
-                      X_test: np.ndarray, y_test: np.ndarray, 
-                      scalers: Dict, feature_cols: List[str]) -> Dict:
+    def train_ensemble(self, X_train, y_train, X_test, y_test, scalers, feature_cols):
         """Train an ensemble of models."""
         self.input_shape = (X_train.shape[1], X_train.shape[2])
         self.feature_cols = feature_cols
@@ -340,7 +339,25 @@ class AdvancedStockPredictor:
             logging.info(f"Completed training {name} model")
         
         self._set_model_type()
+        
+        
         self.histories = model_histories
+        
+         # After training all models, determine the best one
+        best_score = float('inf')
+        best_index = 0
+        
+        for i, (model_name, model) in enumerate(self.models.items()):
+            # Evaluate the model
+            score = model.evaluate(X_test, y_test, verbose=0)
+            
+            # Update best model if this one is better
+            if score < best_score:
+                best_score = score
+                best_index = i
+        
+        # Set the best model index
+        self.best_model_index = best_index
         
         # Save ensemble metadata
         self._save_ensemble_metadata()
