@@ -34,6 +34,7 @@ class AdvancedStockPredictor:
         self.feature_cols = []
         self.input_shape = None
         self.model_dir = "models"
+        self.model_type = 'Unknown'
         
         # Create models directory if it doesn't exist
         os.makedirs(self.model_dir, exist_ok=True)
@@ -122,7 +123,6 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        self.models.append(model)
 
         # Learning rate scheduling
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -183,7 +183,6 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        self.models.append(model)
 
         optimizer = Adam(learning_rate=0.001)
         
@@ -242,7 +241,6 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        self.models.append(model)
         
         # Learning rate scheduling
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -269,7 +267,7 @@ class AdvancedStockPredictor:
         self.models['lstm'] = self.build_lstm_model(input_shape, "lstm")
         self.models['gru'] = self.build_gru_model(input_shape, "gru")
         self.models['cnn_lstm'] = self.build_cnn_lstm_model(input_shape, "cnn_lstm")
-        
+        self._set_model_type()
         logging.info(f"Built {len(self.models)} models: {list(self.models.keys())}")
         
         return self.models
