@@ -81,7 +81,7 @@ class AdvancedStockPredictor:
         else:
             logging.info("No GPU devices found. Running on CPU.")
     
-    def build_lstm_model(self, input_shape: Tuple[int, int], name: str = "lstm") -> Model:
+    def build_lstm_model(self, input_shape, name):
         """Build an enhanced LSTM model with attention."""
         inputs = Input(shape=input_shape, name=f"{name}_input")
         
