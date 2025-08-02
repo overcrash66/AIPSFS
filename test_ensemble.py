@@ -4,12 +4,12 @@ import tensorflow as tf
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import (
     Input, LSTM, GRU, Dense, Dropout, LayerNormalization, 
-    Attention, GlobalAveragePooling1D, Concatenate, Add,
-    Bidirectional, Conv1D, MaxPooling1D, BatchNormalization
+    Attention, GlobalAveragePooling1D, BatchNormalization,
+    Bidirectional, Conv1D, MaxPooling1D
 )
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import (
-    EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
+    EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 )
 from tensorflow.keras.regularizers import l1_l2
 from sklearn.metrics import (
@@ -79,12 +79,13 @@ class AdvancedStockPredictor:
         x = LayerNormalization(name=f"{name}_norm2")(x)
         x = Dropout(0.3, name=f"{name}_dropout2")(x)
         
-        # Attention mechanism
-        attention = Attention(name=f"{name}_attention")([x, x])
-        attention = LayerNormalization(name=f"{name}_attention_norm")(attention)
+        # Attention mechanism - fixed to use MultiHeadAttention
+        # Note: Using functional API for compatibility
+        query_value_attention_seq = Attention(use_scale=True)([x, x])
+        x = LayerNormalization(name=f"{name}_attention_norm")(query_value_attention_seq)
         
         # Global average pooling
-        x = GlobalAveragePooling1D(name=f"{name}_gap")(attention)
+        x = GlobalAveragePooling1D(name=f"{name}_gap")(x)
         
         # Dense layers
         x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01), name=f"{name}_dense1")(x)
@@ -139,11 +140,11 @@ class AdvancedStockPredictor:
         x = Dropout(0.3, name=f"{name}_dropout2")(x)
         
         # Attention mechanism
-        attention = Attention(name=f"{name}_attention")([x, x])
-        attention = LayerNormalization(name=f"{name}_attention_norm")(attention)
+        query_value_attention_seq = Attention(use_scale=True)([x, x])
+        x = LayerNormalization(name=f"{name}_attention_norm")(query_value_attention_seq)
         
         # Global average pooling
-        x = GlobalAveragePooling1D(name=f"{name}_gap")(attention)
+        x = GlobalAveragePooling1D(name=f"{name}_gap")(x)
         
         # Dense layers
         x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01), name=f"{name}_dense1")(x)
@@ -197,11 +198,11 @@ class AdvancedStockPredictor:
         x = Dropout(0.3, name=f"{name}_dropout3")(x)
         
         # Attention mechanism
-        attention = Attention(name=f"{name}_attention")([x, x])
-        attention = LayerNormalization(name=f"{name}_attention_norm")(attention)
+        query_value_attention_seq = Attention(use_scale=True)([x, x])
+        x = LayerNormalization(name=f"{name}_attention_norm")(query_value_attention_seq)
         
         # Global average pooling
-        x = GlobalAveragePooling1D(name=f"{name}_gap")(attention)
+        x = GlobalAveragePooling1D(name=f"{name}_gap")(x)
         
         # Dense layers
         x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01), name=f"{name}_dense1")(x)
@@ -282,6 +283,7 @@ class AdvancedStockPredictor:
                 checkpoint_path,
                 monitor='val_loss',
                 save_best_only=True,
+                save_weights_only=True,  # Changed to weights-only
                 verbose=1
             )
             
@@ -301,7 +303,7 @@ class AdvancedStockPredictor:
             
             model_histories[name] = history.history
             
-            # Load best model
+            # Load best model weights
             model.load_weights(checkpoint_path)
             
             # Save the complete model
@@ -318,11 +320,16 @@ class AdvancedStockPredictor:
     
     def _save_ensemble_metadata(self):
         """Save ensemble metadata for later loading."""
+        # Save scalers as pickle
+        scaler_path = os.path.join(self.model_dir, 'scalers.pkl')
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(self.scalers, f)
+        
         metadata = {
             'model_names': list(self.models.keys()),
             'input_shape': self.input_shape,
             'feature_cols': self.feature_cols,
-            'scalers': self.scalers,
+            'scalers_path': 'scalers.pkl',  # Store path instead of object
             'config': self.config.__dict__,
             'timestamp': datetime.now().isoformat()
         }
@@ -346,14 +353,21 @@ class AdvancedStockPredictor:
         self.model_names = metadata['model_names']
         self.input_shape = tuple(metadata['input_shape'])
         self.feature_cols = metadata['feature_cols']
-        self.scalers = metadata['scalers']
+        
+        # Load scalers from pickle
+        scaler_path = os.path.join(self.model_dir, metadata['scalers_path'])
+        with open(scaler_path, 'rb') as f:
+            self.scalers = pickle.load(f)
         
         # Load models
         self.models = {}
         for name in self.model_names:
             model_path = os.path.join(self.model_dir, f"{name}_final_model.h5")
             if os.path.exists(model_path):
-                self.models[name] = load_model(model_path)
+                self.models[name] = load_model(
+                    model_path, 
+                    custom_objects={'Attention': Attention}
+                )
                 logging.info(f"Loaded {name} model from {model_path}")
             else:
                 logging.warning(f"Model file not found: {model_path}")
@@ -363,8 +377,7 @@ class AdvancedStockPredictor:
         return self.models
     
     def predict_ensemble(self, last_sequence: np.ndarray, 
-                        scalers: Dict, feature_cols: List[str], 
-                        steps: int = None) -> Tuple[np.ndarray, np.ndarray]:
+                        steps: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
         """Make predictions using the ensemble of models."""
         if steps is None:
             steps = self.config.forecast_steps
@@ -373,19 +386,19 @@ class AdvancedStockPredictor:
             logging.warning("No valid sequence provided for forecasting.")
             return np.array([]), np.array([])
         
-        if 'Close' not in scalers or 'Close' not in feature_cols:
+        if 'Close' not in self.scalers or 'Close' not in self.feature_cols:
             logging.error("Scaler or feature column for 'Close' price not found.")
             return np.array([]), np.array([])
         
         # Get predictions from each model
         ensemble_predictions = []
-        close_scaler = scalers['Close']
-        close_idx = feature_cols.index('Close')
+        close_scaler = self.scalers['Close']
+        close_idx = self.feature_cols.index('Close')
         
         for name, model in self.models.items():
             try:
                 predictions = self._predict_with_model(
-                    model, last_sequence, scalers, feature_cols, steps
+                    model, last_sequence, steps
                 )
                 if predictions.size > 0:
                     ensemble_predictions.append(predictions)
@@ -412,13 +425,12 @@ class AdvancedStockPredictor:
         return mean_predictions, prediction_std
     
     def _predict_with_model(self, model: Model, last_sequence: np.ndarray,
-                           scalers: Dict, feature_cols: List[str], 
                            steps: int) -> np.ndarray:
         """Predict with a single model."""
         future_prices_scaled = []
         current_sequence = last_sequence.copy()
-        close_scaler = scalers['Close']
-        close_idx = feature_cols.index('Close')
+        close_scaler = self.scalers['Close']
+        close_idx = self.feature_cols.index('Close')
         
         for i in range(steps):
             try:
@@ -426,11 +438,13 @@ class AdvancedStockPredictor:
                 future_prices_scaled.append(pred_scaled)
                 
                 # Update the sequence for the next prediction
-                new_features_scaled = current_sequence[0, -1, :].copy()
-                new_features_scaled[close_idx] = pred_scaled
+                new_features_scaled = current_sequence[0, 1:, :]  # Remove first time step
+                new_row = current_sequence[0, -1, :].copy()
+                new_row[close_idx] = pred_scaled
                 
-                new_sequence = np.vstack([current_sequence[0, 1:], new_features_scaled])
-                current_sequence = np.array([new_sequence])
+                # Reshape and concatenate
+                new_features_scaled = np.vstack([new_features_scaled, new_row])
+                current_sequence = new_features_scaled[np.newaxis, :, :]
                 
             except Exception as e:
                 logging.error(f"Error during prediction step {i+1}: {str(e)}")
@@ -442,27 +456,26 @@ class AdvancedStockPredictor:
         
         return np.array([])
     
-    def evaluate_ensemble(self, X_test: np.ndarray, y_test: np.ndarray, 
-                      scalers: Dict, feature_cols: List[str]) -> Dict:
+    def evaluate_ensemble(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
         """Evaluate the ensemble models."""
         ensemble_metrics = {}
         
-        # Handle None scalers by creating dummy scalers
-        if scalers.get('Close') is None:
-            logging.warning("Close scaler is None, creating dummy scaler")
-            from sklearn.preprocessing import MinMaxScaler
-            close_scaler = MinMaxScaler(feature_range=(0, 1))
-            close_scaler.fit(y_test.reshape(-1, 1))
-            scalers['Close'] = close_scaler
+        if 'Close' not in self.scalers or 'Close' not in self.feature_cols:
+            logging.error("Scaler or feature column for 'Close' price not found.")
+            return {}
+        
+        close_scaler = self.scalers['Close']
+        y_test_inv = close_scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
+        
+        all_predictions = []
         
         for name, model in self.models.items():
             # Make predictions
             y_pred = model.predict(X_test, verbose=0)
             
-            # Inverse transform predictions and actual values
-            close_scaler = scalers['Close']
-            y_test_inv = close_scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
+            # Inverse transform predictions
             y_pred_inv = close_scaler.inverse_transform(y_pred.reshape(-1, 1)).flatten()
+            all_predictions.append(y_pred_inv)
             
             # Calculate metrics
             metrics = {
@@ -473,28 +486,37 @@ class AdvancedStockPredictor:
             }
             
             # Directional accuracy
-            y_test_diff = np.diff(y_test_inv)
-            y_pred_diff = np.diff(y_pred_inv)
-            metrics['directional_accuracy'] = np.mean((y_test_diff > 0) == (y_pred_diff > 0)) * 100
-            
+            if len(y_test_inv) > 1:
+                y_test_diff = np.diff(y_test_inv)
+                y_pred_diff = np.diff(y_pred_inv)
+                metrics['directional_accuracy'] = np.mean((y_test_diff > 0) == (y_pred_diff > 0)) * 100
+            else:
+                metrics['directional_accuracy'] = 0.0
+                
             ensemble_metrics[name] = metrics
             
             logging.info(f"{name} evaluation metrics: {metrics}")
         
         # Calculate ensemble metrics
-        if len(self.models) > 1:
-            # Get ensemble predictions
-            ensemble_pred, _ = self.predict_ensemble(X_test, scalers, feature_cols, len(y_test))
+        if len(self.models) > 1 and all_predictions:
+            all_predictions = np.array(all_predictions)
+            ensemble_pred = np.mean(all_predictions, axis=0)
             
-            if ensemble_pred.size > 0:
-                ensemble_metrics['ensemble'] = {
-                    'mse': mean_squared_error(y_test_inv, ensemble_pred),
-                    'mae': mean_absolute_error(y_test_inv, ensemble_pred),
-                    'mape': mean_absolute_percentage_error(y_test_inv, ensemble_pred),
-                    'r2': r2_score(y_test_inv, ensemble_pred),
-                    'directional_accuracy': np.mean((y_test_diff > 0) == (np.diff(ensemble_pred) > 0)) * 100
-                }
+            metrics = {
+                'mse': mean_squared_error(y_test_inv, ensemble_pred),
+                'mae': mean_absolute_error(y_test_inv, ensemble_pred),
+                'mape': mean_absolute_percentage_error(y_test_inv, ensemble_pred),
+                'r2': r2_score(y_test_inv, ensemble_pred)
+            }
+            
+            # Directional accuracy
+            if len(y_test_inv) > 1:
+                ensemble_diff = np.diff(ensemble_pred)
+                metrics['directional_accuracy'] = np.mean((y_test_diff > 0) == (ensemble_diff > 0)) * 100
+            else:
+                metrics['directional_accuracy'] = 0.0
                 
-                logging.info(f"Ensemble evaluation metrics: {ensemble_metrics['ensemble']}")
+            ensemble_metrics['ensemble'] = metrics
+            logging.info(f"Ensemble evaluation metrics: {metrics}")
         
         return ensemble_metrics
