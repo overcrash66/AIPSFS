@@ -74,11 +74,9 @@ class AdvancedModelConfig:
     gru_units_layer1: int = 128
     gru_units_layer2: int = 64
     cnn_filters: int = 64
-    epochs: int = 150  # Increased for better training
+    epochs: int = 100
     batch_size: int = 32
-    early_stopping_patience: int = 15  # Increased patience
+    early_stopping_patience: int = 15
     forecast_steps: int = 252
     train_split_ratio: float = 0.8
-    use_ensemble: bool = True
-    ensemble_size: int = 3
-    min_data_rows_for_training: int = 200    
+    min_data_rows_for_training: int = 200   

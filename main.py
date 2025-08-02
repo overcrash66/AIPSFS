@@ -203,14 +203,15 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
     logging.info(f"All batches completed. Total successful: {len(results)}/{len(stock_list)}")
     return results
 
+
+        
 def analyze_stock_task(args: tuple) -> Optional[Dict]:
     """Worker function for parallel stock analysis with advanced models."""
     import tensorflow as tf
-    from model import StockPredictor
     from advanced_model import AdvancedStockPredictor
-    from config import ModelConfig, AdvancedModelConfig
+    from config import AdvancedModelConfig
     
-    # Unpack arguments - now includes model_config and use_advanced
+    # Unpack arguments
     stock, start_date, end_date, data_fetcher, feature_engineer, model_config, use_advanced = args
     
     # Clear TensorFlow session for each process
@@ -263,19 +264,26 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             # Evaluate ensemble
             metrics = predictor.evaluate_ensemble(X_test, y_test, scalers, feature_cols)
             
-            # Get average metrics
-            avg_metrics = {}
-            for metric in ['mse', 'mae', 'mape', 'r2', 'directional_accuracy']:
-                avg_metrics[metric] = np.mean([m[metric] for m in metrics.values()])
+            # Get ensemble metrics (prefer ensemble over individual models)
+            if 'ensemble' in metrics:
+                avg_metrics = metrics['ensemble']
+            else:
+                # Calculate average of individual model metrics
+                avg_metrics = {}
+                for metric in ['mse', 'mae', 'mape', 'r2', 'directional_accuracy']:
+                    avg_metrics[metric] = np.mean([m[metric] for m in metrics.values()])
             
-            # Forecast future prices
+            # Forecast future prices with uncertainty
             last_sequence = X[-1:]
-            forecast_prices = predictor.predict_ensemble(last_sequence, scalers, feature_cols)
+            forecast_prices, forecast_std = predictor.predict_ensemble(last_sequence, scalers, feature_cols)
             
             # Save ensemble
-            predictor.save_ensemble(f"models/{symbol}_ensemble")
+            predictor.save_ensemble_metadata()
+            
         else:
             logging.info(f"Using standard model for {symbol}")
+            # Use your existing StockPredictor
+            from model import StockPredictor
             predictor = StockPredictor(model_config)
             predictor.build_model((X_train.shape[1], X_train.shape[2]))
             
@@ -284,12 +292,12 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             
             # Evaluate model
             metrics = predictor.evaluate_model(X_test, y_test, scalers, feature_cols)
+            avg_metrics = metrics
             
             # Forecast future prices
             last_sequence = X[-1:]
             forecast_prices = predictor.predict(last_sequence, scalers, feature_cols)
-            
-            avg_metrics = metrics
+            forecast_std = np.zeros_like(forecast_prices)  # No uncertainty for single model
         
         if forecast_prices.size == 0:
             logging.warning(f"Forecasting failed for {symbol}")
@@ -312,6 +320,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             'predicted_price': predicted_price,
             'return_pct': return_pct,
             'model_metrics': avg_metrics,
+            'forecast_std': forecast_std[-1] if forecast_std.size > 0 else 0,
             'historical_dates': df.index.tolist(),
             'historical_prices': df['Close'].values.tolist(),
             'forecast_dates': forecast_dates.tolist(),
