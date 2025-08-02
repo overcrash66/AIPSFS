@@ -347,18 +347,24 @@ class AdvancedStockPredictor:
         best_score = float('inf')
         best_index = 0
         
-        for i, (model_name, model) in enumerate(self.models.items()):
+        for model_name, model in self.models.items():
             # Evaluate the model
-            score = model.evaluate(X_test, y_test, verbose=0)
+            evaluation = model.evaluate(X_test, y_test, verbose=0)
             
-            # Update best model if this one is better
-            if score < best_score:
-                best_score = score
-                best_index = i
+            # Handle different return types
+            if isinstance(evaluation, list):
+                loss = evaluation[0]  # First element is typically the loss
+            else:
+                loss = evaluation  # If it's a single value
+            
+            # Update best model if this one has lower loss
+            if loss < best_score:
+                best_score = loss
+                best_model_key = model_name
         
         # Set the best model index
         self.best_model_index = best_index
-        
+
         # Save ensemble metadata
         self._save_ensemble_metadata()
         
