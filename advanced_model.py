@@ -103,7 +103,8 @@ class AdvancedStockPredictor:
             decay_rate=0.9
         )
         
-        optimizer = Adam(learning_rate=lr_schedule)
+        #optimizer = Adam(learning_rate=lr_schedule)
+        optimizer = Adam(learning_rate=0.001)
         
         model.compile(
             optimizer=optimizer,
@@ -220,8 +221,8 @@ class AdvancedStockPredictor:
             decay_rate=0.9
         )
         
-        optimizer = Adam(learning_rate=lr_schedule)
-        
+        #optimizer = Adam(learning_rate=lr_schedule)
+        optimizer = Adam(learning_rate=0.001)
         model.compile(
             optimizer=optimizer,
             loss='mse',
@@ -317,50 +318,58 @@ class AdvancedStockPredictor:
         return model_histories
     
     def _save_ensemble_metadata(self):
-        """Save ensemble metadata for later loading."""
+        """Save ensemble metadata including model information and scalers."""
+        # Create a directory for scalers if it doesn't exist
+        scalers_dir = os.path.join(self.model_dir, 'scalers')
+        os.makedirs(scalers_dir, exist_ok=True)
+        
+        # Save each scaler separately
+        scaler_paths = {}
+        for name, scaler in self.scalers.items():
+            scaler_path = os.path.join(scalers_dir, f'{name}.joblib')
+            joblib.dump(scaler, scaler_path)
+            scaler_paths[name] = scaler_path
+        
+        # Prepare metadata without scaler objects
         metadata = {
-            'model_names': list(self.models.keys()),
-            'input_shape': self.input_shape,
+            'model_type': self.model_type,
             'feature_cols': self.feature_cols,
-            'scalers': self.scalers,
-            'config': self.config.__dict__,
-            'timestamp': datetime.now().isoformat()
+            'target_col': self.target_col,
+            'scalers': scaler_paths,  # Store paths instead of objects
+            'models': self.models,
+            'best_model_index': self.best_model_index,
+            'history': self.history
         }
         
+        # Save metadata to JSON
         metadata_path = os.path.join(self.model_dir, 'ensemble_metadata.json')
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
-        
-        logging.info(f"Saved ensemble metadata to {metadata_path}")
     
-    def load_ensemble(self):
-        """Load a pre-trained ensemble."""
+    def _load_ensemble_metadata(self):
+        """Load ensemble metadata including scalers from files."""
         metadata_path = os.path.join(self.model_dir, 'ensemble_metadata.json')
-        
-        if not os.path.exists(metadata_path):
-            raise FileNotFoundError(f"Ensemble metadata not found at {metadata_path}")
-        
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
         
-        self.model_names = metadata['model_names']
-        self.input_shape = tuple(metadata['input_shape'])
+        # Load scalers from files
+        scalers = {}
+        for name, path in metadata['scalers'].items():
+            scalers[name] = joblib.load(path)
+        
+        # Update metadata with loaded scalers
+        metadata['scalers'] = scalers
+        
+        # Set instance attributes
+        self.model_type = metadata['model_type']
         self.feature_cols = metadata['feature_cols']
+        self.target_col = metadata['target_col']
         self.scalers = metadata['scalers']
+        self.models = metadata['models']
+        self.best_model_index = metadata['best_model_index']
+        self.history = metadata['history']
         
-        # Load models
-        self.models = {}
-        for name in self.model_names:
-            model_path = os.path.join(self.model_dir, f"{name}_final_model.h5")
-            if os.path.exists(model_path):
-                self.models[name] = load_model(model_path)
-                logging.info(f"Loaded {name} model from {model_path}")
-            else:
-                logging.warning(f"Model file not found: {model_path}")
-        
-        logging.info(f"Loaded ensemble with {len(self.models)} models")
-        
-        return self.models
+        return metadata
     
     def predict_ensemble(self, last_sequence: np.ndarray, 
                         scalers: Dict, feature_cols: List[str], 
