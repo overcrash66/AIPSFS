@@ -28,7 +28,7 @@ class AdvancedStockPredictor:
     
     def __init__(self, config):
         self.config = config
-        self.models = []
+        self.models = {}
         self.scalers = {}
         self.histories = {}
         self.feature_cols = []
@@ -243,7 +243,7 @@ class AdvancedStockPredictor:
         
         model = Model(inputs=inputs, outputs=output, name=name)
         self.models.append(model)
-
+        
         # Learning rate scheduling
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=0.001,
