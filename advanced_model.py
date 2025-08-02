@@ -35,6 +35,7 @@ class AdvancedStockPredictor:
         self.input_shape = None
         self.model_dir = "models"
         self.model_type = 'Unknown'
+        self.target_col = getattr(self, 'target_col', 'Close')
         
         # Create models directory if it doesn't exist
         os.makedirs(self.model_dir, exist_ok=True)
@@ -363,7 +364,7 @@ class AdvancedStockPredictor:
         metadata = {
             'model_type': self.model_type,
             'feature_cols': self.feature_cols,
-            'target_col': self.target_col,
+            'target_col': self.target_col, 
             'scalers': scaler_paths,  # Store paths instead of objects
             'models': self.models,
             'best_model_index': self.best_model_index,
