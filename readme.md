@@ -77,7 +77,18 @@ LOG_LEVEL=INFO
 # Run the analysis
 
 ```
+
+# Use standard models
+python main.py --stocks stocks.csv
+
+#Use standard models with custom parameters
 python main.py --stocks stocks.csv --start-date 2022-01-01 --end-date 2023-12-31 --top-n 10
+
+# Use advanced ensemble models
+python main.py --stocks stocks.csv --use-advanced
+
+# Use advanced models with custom parameters
+python main.py --stocks stocks.csv --use-advanced --top-n 5 --min-return 30.0
 ```
 
 | Option       | Description                               | Default     |
@@ -92,23 +103,7 @@ python main.py --stocks stocks.csv --start-date 2022-01-01 --end-date 2023-12-31
 | --debug      | Enable debug logging                      | False       |
 
 
-# Project Structure
-
-stock_analysis/
-├── main.py                 # Main application entry point
-├── config.py               # Configuration classes
-├── data_fetcher.py         # Data fetching module
-├── feature_engineering.py   # Feature engineering module
-├── model.py                # LSTM model with attention
-├── reporter.py             # PDF report generation
-├── utils.py                # Utility functions
-├── requirements.txt        # Python dependencies
-├── .env.example           # Environment variables template
-├── stocks.csv             # Example stock list
-└── README.md              # This file
-
-
-## How It Works
+## How It Works (Original MVP there will be a tone of new updates and changes)
 
 ### 1. Data Collection
 - The system fetches historical stock data from multiple sources with automatic fallback mechanisms.
