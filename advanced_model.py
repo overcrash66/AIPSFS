@@ -37,6 +37,7 @@ class AdvancedStockPredictor:
         self.model_type = 'Unknown'
         self.target_col = getattr(self, 'target_col', 'Close')
         self.best_model_index = None
+        self.history = {}
         
         # Create models directory if it doesn't exist
         os.makedirs(self.model_dir, exist_ok=True)
@@ -391,7 +392,7 @@ class AdvancedStockPredictor:
             'scalers': scaler_paths,  # Store paths instead of objects
             'models': self.models,
             'best_model_index': self.best_model_index,
-            'history': self.history
+            'history': self.history if hasattr(self, 'history') else {},
         }
         
         # Save metadata to JSON
