@@ -327,23 +327,25 @@ class AdvancedStockPredictor:
 
     def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
         # last_sequence: [batch, time, features]
-        seq = last_sequence
+        # find index of your target column (e.g. 'Close')
+        target_idx = self.feature_cols.index(self.target_col)
+        
+        # reduce to [batch, time, 1]
+        seq = last_sequence[:, :, target_idx:target_idx+1]
+
         ta = tf.TensorArray(tf.float32, size=steps)
-
         for i in tf.range(steps):
-            # run the model as a layer call, not .predict()
-            pred = model(seq)                # e.g. [batch, 1] or [batch, 1, 1]
+            pred = model(seq)                   # [batch, 1] or [batch,1,1]
             if len(pred.shape) == 2:
-                pred = tf.expand_dims(pred, 1)
-            ta = ta.write(i, tf.squeeze(pred, 1))  
+                pred = tf.expand_dims(pred, axis=1)   # → [batch,1,1]
 
-            # slide the window
+            ta = ta.write(i, tf.squeeze(pred, 1))     # store [batch,1] into ta
+
+            # now slide *just* that 1-dim window
             seq = tf.concat([seq[:, 1:, :], pred], axis=1)
 
-        # stack → [steps, batch, features], then transpose → [batch, steps, features]
-        out = ta.stack()
-        out = tf.transpose(out, [1, 0, 2])
-        return out
+        out = ta.stack()                       # [steps, batch, 1]
+        return tf.transpose(out, [1, 0, 2])    # → [batch, steps, 1]
 
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
         """Evaluate all models and the ensemble on the test set."""
