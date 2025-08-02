@@ -17,7 +17,7 @@ class ModelConfig:
     lstm_units_layer1: int = 128
     lstm_units_layer2: int = 64
     train_split_ratio: float = 0.8
-    early_stopping_patience: int = 7
+    early_stopping_patience: int = 15
     min_data_rows_for_training: int = 110  # lookback + 100
 
 @dataclass

@@ -227,7 +227,7 @@ class AdvancedStockPredictor:
             tf.get_logger().setLevel('INFO')
             self.histories[name] = history.history
             model.load_weights(checkpoint_path)
-            model.save(os.path.join(self.model_dir, f"{name}_final_model.h5"))
+            model.save(os.path.join(self.model_dir, f"{name}_final_model.keras"))
             logging.info(f"Completed training for {name} model.")
 
         self._determine_best_model(X_test, y_test)
@@ -278,6 +278,7 @@ class AdvancedStockPredictor:
             json.dump(metadata, f, indent=4)
         logging.info(f"Ensemble metadata saved to {metadata_path}")
 
+    @tf.function(reduce_retracing=True)
     def predict(self, last_sequence: np.ndarray, steps: Optional[int] = None, use_best_model: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Make future predictions using the ensemble average or the single best model.
@@ -292,6 +293,12 @@ class AdvancedStockPredictor:
         """
         if steps is None:
             steps = self.config.forecast_steps
+
+        if isinstance(steps, dict):
+            # Extract integer value from dictionary
+            steps = steps.get('steps', steps.get('n_steps', 1))  # Default to 1 if key missing
+        # Ensure steps is an integer
+        steps = int(steps)
 
         if use_best_model and self.best_model_name:
             logging.info(f"Predicting using the best model: {self.best_model_name}")
