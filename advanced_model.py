@@ -384,19 +384,28 @@ class AdvancedStockPredictor:
             joblib.dump(scaler, scaler_path)
             scaler_paths[name] = scaler_path
         
-        # Prepare metadata without scaler objects
+        # --- Start of fix ---
+        # Create a dictionary of paths to the saved models instead of the objects themselves.
+        model_paths = {
+            name: os.path.join(self.model_dir, f"{name}_final_model.h5")
+            for name in self.models.keys()
+        }
+        # --- End of fix ---
+
+        # Prepare metadata with model paths, not model objects
         metadata = {
             'model_type': self.model_type,
             'feature_cols': self.feature_cols,
             'target_col': self.target_col, 
-            'scalers': scaler_paths,  # Store paths instead of objects
-            'models': self.models,
+            'scalers': scaler_paths,
+            'models': model_paths,  # Use the dictionary of paths
             'best_model_index': self.best_model_index,
-            'history': self.history if hasattr(self, 'history') else {},
+            'history': self.history
         }
         
         # Save metadata to JSON
         metadata_path = os.path.join(self.model_dir, 'ensemble_metadata.json')
+        # The dictionary now contains only JSON-serializable data types.
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
     
