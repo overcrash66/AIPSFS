@@ -40,7 +40,24 @@ class AdvancedStockPredictor:
         
         # Configure GPU if available
         self._configure_gpu()
-        
+    
+    def _set_model_type(self):
+        """Determine model type based on the models in the ensemble."""
+        if not self.models:
+            self.model_type = 'Unknown'
+            return
+            
+        # Check the first model to determine type
+        first_model = self.models[0]
+        if 'LSTM' in str(type(first_model)):
+            self.model_type = 'LSTM'
+        elif 'GRU' in str(type(first_model)):
+            self.model_type = 'GRU'
+        elif 'CNN' in str(type(first_model)):
+            self.model_type = 'CNN'
+        else:
+            self.model_type = 'NeuralNetwork'     
+    
     def _configure_gpu(self):
         """Configure TensorFlow to use GPU if available with memory growth."""
         gpus = tf.config.list_physical_devices('GPU')
@@ -310,6 +327,7 @@ class AdvancedStockPredictor:
             
             logging.info(f"Completed training {name} model")
         
+        self._set_model_type()
         self.histories = model_histories
         
         # Save ensemble metadata
