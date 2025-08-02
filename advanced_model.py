@@ -212,7 +212,7 @@ class AdvancedStockPredictor:
 
         for name, model in self.models.items():
             logging.info(f"--- Training {name.upper()} model ---")
-            checkpoint_path = os.path.join(self.model_dir, f"{name}_best_model.h5")
+            checkpoint_path = os.path.join(self.model_dir, f"{name}_best_model.keras")
             checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
             
             tf.get_logger().setLevel('ERROR')
@@ -227,7 +227,7 @@ class AdvancedStockPredictor:
             tf.get_logger().setLevel('INFO')
             self.histories[name] = history.history
             model.load_weights(checkpoint_path)
-            model.save(os.path.join(self.model_dir, f"{name}_final_model"))
+            model.save(os.path.join(self.model_dir, f"{name}_final_model.keras"))
             logging.info(f"Completed training for {name} model.")
 
         self._determine_best_model(X_test, y_test)
@@ -260,7 +260,7 @@ class AdvancedStockPredictor:
             joblib.dump(scaler, scaler_path)
             scaler_paths[name] = scaler_path
         
-        model_paths = {name: os.path.join(self.model_dir, f"{name}_final_model.h5") for name in self.models.keys()}
+        model_paths = {name: os.path.join(self.model_dir, f"{name}_final_model.keras") for name in self.models.keys()}
         
         metadata = {
             'model_type': self.model_type,
