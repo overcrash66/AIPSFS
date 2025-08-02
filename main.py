@@ -262,7 +262,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             history = predictor.train_ensemble(X_train, y_train, X_test, y_test, scalers, feature_cols)
             
             # Evaluate ensemble
-            metrics = predictor.evaluate_ensemble(X_test, y_test, scalers, feature_cols)
+            metrics = predictor.evaluate(X_test, y_test)
             
             # Get ensemble metrics (prefer ensemble over individual models)
             if 'ensemble' in metrics:
