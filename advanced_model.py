@@ -28,7 +28,7 @@ class AdvancedStockPredictor:
     
     def __init__(self, config):
         self.config = config
-        self.models = {}
+        self.models = []
         self.scalers = {}
         self.histories = {}
         self.feature_cols = []
@@ -47,8 +47,18 @@ class AdvancedStockPredictor:
             self.model_type = 'Unknown'
             return
             
-        # Check the first model to determine type
-        first_model = self.models[0]
+        # Ensure we're working with a list
+        if isinstance(self.models, list):
+            first_model = self.models[0]
+        else:
+            # If it's not a list, try to get the first model
+            try:
+                first_model = next(iter(self.models.values()))
+            except (AttributeError, StopIteration):
+                self.model_type = 'Unknown'
+                return
+            
+        # Check the type of the first model
         if 'LSTM' in str(type(first_model)):
             self.model_type = 'LSTM'
         elif 'GRU' in str(type(first_model)):
@@ -112,7 +122,8 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        
+        self.models.append(model)
+
         # Learning rate scheduling
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=0.001,
@@ -172,7 +183,8 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        
+        self.models.append(model)
+
         optimizer = Adam(learning_rate=0.001)
         
         model.compile(
@@ -230,7 +242,8 @@ class AdvancedStockPredictor:
         output = Dense(1, name=f"{name}_output")(x)
         
         model = Model(inputs=inputs, outputs=output, name=name)
-        
+        self.models.append(model)
+
         # Learning rate scheduling
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=0.001,
@@ -321,7 +334,7 @@ class AdvancedStockPredictor:
             
             # Load best model
             model.load_weights(checkpoint_path)
-            
+
             # Save the complete model
             model.save(os.path.join(self.model_dir, f"{name}_final_model.h5"))
             
