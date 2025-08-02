@@ -423,7 +423,12 @@ class DataFetcher:
             if dfs:
                 macro_data = pd.concat(dfs, axis=1)
                 macro_data = macro_data.resample('D').ffill().bfill()
-                macro_data.index = macro_data.index.date
+                #macro_data.index = macro_data.index.date
+                macro_data = macro_data.reset_index()
+                macro_data.rename(columns={'index': 'date'}, inplace=True)
+
+                # Convert to date only (without time)
+                macro_data['date'] = macro_data['date'].dt.date
                 logging.info(f"Fetched {len(macro_data)} macro data points")
         except Exception as e:
             logging.error(f"Macro data fetching failed: {str(e)}")

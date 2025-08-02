@@ -22,7 +22,7 @@ from datetime import datetime
 import os
 import json
 import pickle
-
+import joblib
 class AdvancedStockPredictor:
     """Advanced stock prediction model with ensemble and attention mechanisms."""
     
