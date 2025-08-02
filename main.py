@@ -275,7 +275,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             
             # Forecast future prices with uncertainty
             last_sequence = X[-1:]
-            forecast_prices, forecast_std = predictor.predict_ensemble(last_sequence, scalers, feature_cols)
+            forecast_prices, forecast_std = predictor.predict(last_sequence, scalers, feature_cols)
             
             # Save ensemble
             predictor.save_ensemble_metadata()
