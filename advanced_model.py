@@ -227,7 +227,7 @@ class AdvancedStockPredictor:
             tf.get_logger().setLevel('INFO')
             self.histories[name] = history.history
             model.load_weights(checkpoint_path)
-            model.save(os.path.join(self.model_dir, f"{name}_final_model.keras"))
+            model.save(os.path.join(self.model_dir, f"{name}_final_model"))
             logging.info(f"Completed training for {name} model.")
 
         self._determine_best_model(X_test, y_test)
@@ -278,7 +278,6 @@ class AdvancedStockPredictor:
             json.dump(metadata, f, indent=4)
         logging.info(f"Ensemble metadata saved to {metadata_path}")
 
-    @tf.function(reduce_retracing=True)
     def predict(self, last_sequence: np.ndarray, steps: Optional[int] = None, use_best_model: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Make future predictions using the ensemble average or the single best model.
@@ -326,25 +325,25 @@ class AdvancedStockPredictor:
         logging.info(f"Ensemble prediction for last step: {mean_predictions[-1]:.2f} +/- {prediction_std[-1]:.4f}")
         return mean_predictions, prediction_std
 
-    def _predict_with_model(self, model: Model, last_sequence: np.ndarray, steps: int) -> np.ndarray:
-        """Helper function to predict with a single model."""
-        future_prices_scaled = []
-        current_sequence = last_sequence.copy()
-        close_scaler = self.scalers[self.target_col]
-        close_idx = self.feature_cols.index(self.target_col)
-        
-        for _ in range(steps):
-            pred_scaled = model.predict(current_sequence, verbose=0)[0, 0]
-            future_prices_scaled.append(pred_scaled)
-            
-            new_features_scaled = current_sequence[0, -1, :].copy()
-            new_features_scaled[close_idx] = pred_scaled
-            
-            new_sequence = np.vstack([current_sequence[0, 1:], new_features_scaled])
-            current_sequence = np.array([new_sequence])
-        
-        future_prices_scaled = np.array(future_prices_scaled).reshape(-1, 1)
-        return close_scaler.inverse_transform(future_prices_scaled).flatten()
+    def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
+        # last_sequence: [batch, time, features]
+        seq = last_sequence
+        ta = tf.TensorArray(tf.float32, size=steps)
+
+        for i in tf.range(steps):
+            # run the model as a layer call, not .predict()
+            pred = model(seq)                # e.g. [batch, 1] or [batch, 1, 1]
+            if len(pred.shape) == 2:
+                pred = tf.expand_dims(pred, 1)
+            ta = ta.write(i, tf.squeeze(pred, 1))  
+
+            # slide the window
+            seq = tf.concat([seq[:, 1:, :], pred], axis=1)
+
+        # stack → [steps, batch, features], then transpose → [batch, steps, features]
+        out = ta.stack()
+        out = tf.transpose(out, [1, 0, 2])
+        return out
 
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
         """Evaluate all models and the ensemble on the test set."""
