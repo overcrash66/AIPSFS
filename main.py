@@ -17,6 +17,9 @@ from reporter import ReportGenerator
 from utils import setup_logging, load_stock_list
 import numpy as np
 
+from advanced_model import AdvancedStockPredictor
+from config import AdvancedModelConfig
+
 # Load environment variables
 load_dotenv()
 
@@ -24,7 +27,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='AI-Powered Stock Forecasting System')
     
-    parser.add_argument('--stocks', type=str, default='stock_list.csv',
+    parser.add_argument('--stocks', type=str, default='stocks.csv',
                        help='Path to CSV file containing stock list')
     parser.add_argument('--start-date', type=str, 
                        help='Start date for analysis (YYYY-MM-DD)')
@@ -40,6 +43,8 @@ def parse_arguments():
                        help='Disable caching of API responses')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
+    parser.add_argument('--use-advanced', action='store_true',
+                       help='Use advanced ensemble models')
     
     return parser.parse_args()
 
@@ -53,6 +58,9 @@ def main():
     logging.info("Starting AI Stock Forecasting System")
     
     try:
+        # Create models directory if it doesn't exist
+        os.makedirs('models', exist_ok=True)
+        
         # Load configuration from environment variables
         api_config = ApiConfig.from_env()
         model_config = ModelConfig()
@@ -101,7 +109,8 @@ def main():
             end_date=end_date,
             data_fetcher=data_fetcher,
             feature_engineer=feature_engineer,
-            system_config=system_config
+            system_config=system_config,
+            use_advanced=args.use_advanced
         )
         
         if not results:
@@ -141,9 +150,9 @@ def main():
 
 def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datetime,
                   data_fetcher: DataFetcher, feature_engineer: FeatureEngineer,
-                  system_config: SystemConfig) -> List[Dict]:
+                  system_config: SystemConfig, use_advanced: bool) -> List[Dict]:
     """Process stocks in parallel batches."""
-    from multiprocessing import Pool, cpu_count  # Import cpu_count
+    from multiprocessing import Pool, cpu_count
     import time
     import random
     from tqdm import tqdm
@@ -152,7 +161,7 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
     
     # Process in batches to avoid API rate limits
     batch_size = system_config.batch_processing_size
-    max_processes = min(system_config.max_processes, cpu_count())  # Add parentheses here
+    max_processes = min(system_config.max_processes, cpu_count())
     
     logging.info(f"Processing stocks in batches of {batch_size} using {max_processes} processes")
     logging.info(f"Total stocks to process: {len(stock_list)}")
@@ -170,8 +179,7 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
         # Prepare arguments for each task
         tasks = [
             (stock, start_date, end_date, data_fetcher, 
-             feature_engineer, 
-             system_config.model)
+             feature_engineer, system_config.model, use_advanced)
             for stock in batch
         ]
         
@@ -196,12 +204,14 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
     return results
 
 def analyze_stock_task(args: tuple) -> Optional[Dict]:
-    """Worker function for parallel stock analysis."""
+    """Worker function for parallel stock analysis with advanced models."""
     import tensorflow as tf
     from model import StockPredictor
+    from advanced_model import AdvancedStockPredictor
+    from config import ModelConfig, AdvancedModelConfig
     
-    # Unpack arguments
-    stock, start_date, end_date, data_fetcher, feature_engineer, model_config = args
+    # Unpack arguments - now includes model_config and use_advanced
+    stock, start_date, end_date, data_fetcher, feature_engineer, model_config, use_advanced = args
     
     # Clear TensorFlow session for each process
     tf.keras.backend.clear_session()
@@ -242,24 +252,44 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
         y_train, y_test = y[:split], y[split:]
         
         # 4. Build and train model
-        predictor = StockPredictor(model_config)
-        predictor.build_model((X_train.shape[1], X_train.shape[2]))
-        
-        # Suppress TensorFlow logging during training
-        tf.get_logger().setLevel('ERROR')
-        history = predictor.train(X_train, y_train, X_test, y_test)
-        tf.get_logger().setLevel('INFO')
-        
-        if not history['val_loss'] or np.isnan(history['val_loss'][-1]):
-            logging.warning(f"Model training for {symbol} resulted in NaN validation loss")
-            return None
-        
-        # 5. Evaluate model
-        metrics = predictor.evaluate_model(X_test, y_test, scalers, feature_cols)
-        
-        # 6. Forecast future prices
-        last_sequence = X[-1:]
-        forecast_prices = predictor.predict(last_sequence, scalers, feature_cols)
+        if use_advanced:
+            logging.info(f"Using advanced ensemble model for {symbol}")
+            advanced_config = AdvancedModelConfig()
+            predictor = AdvancedStockPredictor(advanced_config)
+            
+            # Train ensemble
+            history = predictor.train_ensemble(X_train, y_train, X_test, y_test, scalers, feature_cols)
+            
+            # Evaluate ensemble
+            metrics = predictor.evaluate_ensemble(X_test, y_test, scalers, feature_cols)
+            
+            # Get average metrics
+            avg_metrics = {}
+            for metric in ['mse', 'mae', 'mape', 'r2', 'directional_accuracy']:
+                avg_metrics[metric] = np.mean([m[metric] for m in metrics.values()])
+            
+            # Forecast future prices
+            last_sequence = X[-1:]
+            forecast_prices = predictor.predict_ensemble(last_sequence, scalers, feature_cols)
+            
+            # Save ensemble
+            predictor.save_ensemble(f"models/{symbol}_ensemble")
+        else:
+            logging.info(f"Using standard model for {symbol}")
+            predictor = StockPredictor(model_config)
+            predictor.build_model((X_train.shape[1], X_train.shape[2]))
+            
+            # Train model
+            history = predictor.train(X_train, y_train, X_test, y_test)
+            
+            # Evaluate model
+            metrics = predictor.evaluate_model(X_test, y_test, scalers, feature_cols)
+            
+            # Forecast future prices
+            last_sequence = X[-1:]
+            forecast_prices = predictor.predict(last_sequence, scalers, feature_cols)
+            
+            avg_metrics = metrics
         
         if forecast_prices.size == 0:
             logging.warning(f"Forecasting failed for {symbol}")
@@ -281,11 +311,12 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             'current_price': current_price,
             'predicted_price': predicted_price,
             'return_pct': return_pct,
-            'model_metrics': metrics,
+            'model_metrics': avg_metrics,
             'historical_dates': df.index.tolist(),
             'historical_prices': df['Close'].values.tolist(),
             'forecast_dates': forecast_dates.tolist(),
-            'forecast_prices': forecast_prices.tolist()
+            'forecast_prices': forecast_prices.tolist(),
+            'use_advanced': use_advanced
         }
         
     except Exception as e:
