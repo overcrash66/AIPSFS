@@ -270,7 +270,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             else:
                 # Calculate average of individual model metrics
                 avg_metrics = {}
-                for metric in ['mse', 'mae', 'mape', 'r2', 'directional_accuracy']:
+                for metric in ['mse', 'mae', 'r2', 'directional_accuracy']:
                     avg_metrics[metric] = np.mean([m[metric] for m in metrics.values()])
             
             # Forecast future prices with uncertainty

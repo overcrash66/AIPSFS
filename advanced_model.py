@@ -361,7 +361,6 @@ class AdvancedStockPredictor:
             metrics = {
                 'mse': mean_squared_error(y_test_inv, y_pred_inv),
                 'mae': mean_absolute_error(y_test_inv, y_pred_inv),
-                'mape': mean_absolute_error(y_test_inv, y_pred_inv),
                 'r2': r2_score(y_test_inv, y_pred_inv),
                 'directional_accuracy': directional_accuracy   
             }
