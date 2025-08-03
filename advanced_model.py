@@ -114,7 +114,7 @@ class AdvancedStockPredictor:
 
     def build_lstm_model(self, input_shape, name):
         """Build an enhanced LSTM model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input")
+        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
         x = LSTM(
             self.config.lstm_units_layer1, return_sequences=True,
             recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
@@ -141,7 +141,7 @@ class AdvancedStockPredictor:
 
     def build_gru_model(self, input_shape: Tuple[int, int], name: str = "gru") -> Model:
         """Build a GRU-based model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input")
+        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
         x = GRU(
             self.config.gru_units_layer1, return_sequences=True,
             recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
@@ -168,7 +168,7 @@ class AdvancedStockPredictor:
 
     def build_cnn_lstm_model(self, input_shape: Tuple[int, int], name: str = "cnn_lstm") -> Model:
         """Build a hybrid CNN-LSTM model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input")
+        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
         x = Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(inputs)
         x = MaxPooling1D(pool_size=2)(x)
         x = BatchNormalization()(x)
@@ -298,6 +298,11 @@ class AdvancedStockPredictor:
             steps = steps.get('steps', steps.get('n_steps', 1))  # Default to 1 if key missing
         # Ensure steps is an integer
         steps = int(steps)
+        
+        # Ensure proper input shape and type
+        if last_sequence.ndim == 2:
+            last_sequence = np.expand_dims(last_sequence, axis=0)
+        last_sequence = last_sequence.astype(np.float32)
 
         if use_best_model and self.best_model_name:
             logging.info(f"Predicting using the best model: {self.best_model_name}")
@@ -310,8 +315,16 @@ class AdvancedStockPredictor:
         for name, model in self.models.items():
             try:
                 predictions = self._predict_with_model(model, last_sequence, steps)
-                if predictions.size > 0:
+                
+                # Convert to numpy for size check
+                if isinstance(predictions, tf.Tensor):
+                    predictions = predictions.numpy()
+                
+                # Check if predictions are valid using tf.size
+                if tf.size(predictions).numpy() > 0:
                     ensemble_predictions.append(predictions)
+                else:
+                    logging.warning(f"Empty predictions from {name}")
             except Exception as e:
                 logging.error(f"Error predicting with {name}: {str(e)}")
         
@@ -322,16 +335,21 @@ class AdvancedStockPredictor:
         mean_predictions = np.mean(ensemble_predictions, axis=0)
         prediction_std = np.std(ensemble_predictions, axis=0)
         
-        logging.info(f"Ensemble prediction for last step: {mean_predictions[-1]:.2f} +/- {prediction_std[-1]:.4f}")
+        # Extract scalar values for logging
+        try:
+            last_mean = float(mean_predictions[-1])
+            last_std = float(prediction_std[-1])
+            logging.info(f"Ensemble prediction for last step: {last_mean:.2f} +/- {last_std:.4f}")
+        except Exception as e:
+            logging.warning(f"Could not format prediction values: {str(e)}")
+        
         return mean_predictions, prediction_std
 
     @tf.function(reduce_retracing=True)
     def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
-        # Ensure consistent batch dimension
-        if last_sequence.shape[0] is None:
-            last_sequence = tf.ensure_shape(last_sequence, [1, last_sequence.shape[1], last_sequence.shape[2]])
-        
-        seq = last_sequence
+        """Recursive prediction function with consistent type handling."""
+        # Ensure consistent float32 type
+        seq = tf.cast(last_sequence, tf.float32)
         batch_size = tf.shape(seq)[0]
         ta = tf.TensorArray(tf.float32, size=steps)
 
@@ -340,21 +358,23 @@ class AdvancedStockPredictor:
             if len(pred.shape) == 2:
                 pred = tf.expand_dims(pred, axis=1)
             
-            # Use symbolic shape instead of static shape
+            # Ensure consistent type
+            pred = tf.cast(pred, tf.float32)
+            
             feat_dim = tf.shape(seq)[-1]
             pred_full = tf.tile(pred, [1, 1, feat_dim])
             
             # Maintain consistent sequence length
-            seq = tf.concat([seq[:, 1:, :], pred_full], axis=1)
-            seq = tf.ensure_shape(seq, [batch_size, last_sequence.shape[1], feat_dim])
+            seq_slice = seq[:, 1:, :]
+            seq = tf.concat([seq_slice, pred_full], axis=1)
             
-            ta = ta.write(i, tf.squeeze(pred, axis=1))
+            # Write prediction (squeeze to 1D)
+            ta = ta.write(i, tf.squeeze(pred))
 
         out = ta.stack()
         if len(out.shape) == 2:
             out = tf.transpose(out, [1, 0])
         return out
-
 
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
         """Evaluate all models and the ensemble on the test set."""
