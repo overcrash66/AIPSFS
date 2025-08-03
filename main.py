@@ -258,14 +258,14 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             last_sequence = np.expand_dims(last_sequence, axis=0)
         
         if use_advanced:
+            
+            logging.info(f"Using advanced ensemble model for {symbol}")
+            advanced_config = AdvancedModelConfig()
+            predictor = AdvancedStockPredictor(advanced_config)
             forecast_prices, forecast_std = predictor.predict(
                 last_sequence=last_sequence.astype(np.float32),
                 steps=model_config.forecast_steps
             )
-            logging.info(f"Using advanced ensemble model for {symbol}")
-            advanced_config = AdvancedModelConfig()
-            predictor = AdvancedStockPredictor(advanced_config)
-            
             # Train ensemble
             history = predictor.train_ensemble(X_train, y_train, X_test, y_test, scalers, feature_cols)
             
