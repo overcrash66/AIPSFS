@@ -299,7 +299,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             forecast_prices = predictor.predict(last_sequence, scalers, feature_cols)
             forecast_std = np.zeros_like(forecast_prices)  # No uncertainty for single model
         
-        if forecast_prices.size == 0:
+        if tf.size(forecast_prices) == 0:
             logging.warning(f"Forecasting failed for {symbol}")
             return None
         
