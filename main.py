@@ -252,8 +252,16 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
         X_train, X_test = X[:split], X[split:]
         y_train, y_test = y[:split], y[split:]
         
-        # 4. Build and train model
+        # Ensure proper tensor shape
+        last_sequence = X[-1:]
+        if last_sequence.shape[0] != 1:
+            last_sequence = np.expand_dims(last_sequence, axis=0)
+        
         if use_advanced:
+            forecast_prices, forecast_std = predictor.predict(
+                last_sequence=last_sequence.astype(np.float32),
+                steps=model_config.forecast_steps
+            )
             logging.info(f"Using advanced ensemble model for {symbol}")
             advanced_config = AdvancedModelConfig()
             predictor = AdvancedStockPredictor(advanced_config)
@@ -274,8 +282,10 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
                     avg_metrics[metric] = np.mean([m[metric] for m in metrics.values()])
             
             # Forecast future prices with uncertainty
+            # last_sequence = X[-1:]
+            # forecast_prices, forecast_std = predictor.predict(last_sequence, scalers, feature_cols)
             last_sequence = X[-1:]
-            forecast_prices, forecast_std = predictor.predict(last_sequence, scalers, feature_cols)
+            forecast_prices, forecast_std = predictor.predict(last_sequence)
             
             # Save ensemble
             predictor._save_ensemble_metadata()
@@ -298,14 +308,26 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             last_sequence = X[-1:]
             forecast_prices = predictor.predict(last_sequence, scalers, feature_cols)
             forecast_std = np.zeros_like(forecast_prices)  # No uncertainty for single model
+            
+            # Convert predictions to scalar values
+            predicted_price = float(np.ravel(forecast_prices)[-1])  # Ensure scalar
+            std_value = float(np.ravel(forecast_std)[-1]) if forecast_std.size > 0 else 0.0
+            
+            current_price = df['Close'].iloc[-1]
+            return_pct = ((predicted_price - current_price) / current_price) * 100
+
+        #if forecast_prices.size == 0:
+        #if tf.size(forecast_prices) == 0:
+        #if forecast_prices.numpy().size == 0:
+        #    logging.warning(f"Forecasting failed for {symbol}")
+        #    return None
         
-        if tf.size(forecast_prices) == 0:
-            logging.warning(f"Forecasting failed for {symbol}")
-            return None
-        
-        current_price = df['Close'].iloc[-1]
-        predicted_price = forecast_prices[-1]
-        return_pct = ((predicted_price - current_price) / current_price) * 100
+        #current_price = df['close'].iloc[-1]
+        #predicted_price = forecast_prices[-1]
+        #return_pct = ((predicted_price - current_price) / current_price) * 100
+        # current_price = float(current_price)
+        # predicted_price = float(predicted_price)
+        # return_pct = float(return_pct)
         
         logging.info(f"Completed {symbol}: Current=${current_price:.2f}, Predicted=${predicted_price:.2f}, Return={return_pct:.2f}%")
         
@@ -320,7 +342,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             'predicted_price': predicted_price,
             'return_pct': return_pct,
             'model_metrics': avg_metrics,
-            'forecast_std': forecast_std[-1] if forecast_std.size > 0 else 0,
+            'forecast_std': std_value,
             'historical_dates': df.index.tolist(),
             'historical_prices': df['Close'].values.tolist(),
             'forecast_dates': forecast_dates.tolist(),

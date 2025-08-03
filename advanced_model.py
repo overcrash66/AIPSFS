@@ -325,29 +325,34 @@ class AdvancedStockPredictor:
         logging.info(f"Ensemble prediction for last step: {mean_predictions[-1]:.2f} +/- {prediction_std[-1]:.4f}")
         return mean_predictions, prediction_std
 
+    @tf.function(reduce_retracing=True)
     def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
-        seq = last_sequence  # [batch, time, features] — features = 23
-
+        # Ensure consistent batch dimension
+        if last_sequence.shape[0] is None:
+            last_sequence = tf.ensure_shape(last_sequence, [1, last_sequence.shape[1], last_sequence.shape[2]])
+        
+        seq = last_sequence
+        batch_size = tf.shape(seq)[0]
         ta = tf.TensorArray(tf.float32, size=steps)
 
         for i in tf.range(steps):
-            pred = model(seq)  # model expects [batch, time, 23]
+            pred = model(seq)
             if len(pred.shape) == 2:
-                pred = tf.expand_dims(pred, axis=1)  # [batch, 1, 1]
-
-            # 🔧 TILE the single prediction across the 23 feature dims
-            feat_dim = seq.shape[-1]  # 23
-            pred_full = tf.tile(pred, [1, 1, feat_dim])  # [batch, 1, 23]
-
-            # ✅ CONCAT: [batch, time - 1, 23] + [batch, 1, 23] → [batch, time, 23]
+                pred = tf.expand_dims(pred, axis=1)
+            
+            # Use symbolic shape instead of static shape
+            feat_dim = tf.shape(seq)[-1]
+            pred_full = tf.tile(pred, [1, 1, feat_dim])
+            
+            # Maintain consistent sequence length
             seq = tf.concat([seq[:, 1:, :], pred_full], axis=1)
-
-            # Save the prediction (still just the target value)
-            ta = ta.write(i, tf.squeeze(pred, axis=1))  # [batch, 1] → [batch]
+            seq = tf.ensure_shape(seq, [batch_size, last_sequence.shape[1], feat_dim])
+            
+            ta = ta.write(i, tf.squeeze(pred, axis=1))
 
         out = ta.stack()
         if len(out.shape) == 2:
-            out = tf.transpose(out, [1, 0])  # [steps, batch] → [batch, steps]
+            out = tf.transpose(out, [1, 0])
         return out
 
 

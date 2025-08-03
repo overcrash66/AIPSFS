@@ -28,6 +28,7 @@ class ApiConfig:
     fred_api_key: Optional[str] = None
     fmp_api_key: Optional[str] = None
     alpha_vantage_api_key: Optional[str] = None
+    gnews_api_key: Optional[str] = None
     
     @classmethod
     def from_env(cls):
@@ -38,7 +39,8 @@ class ApiConfig:
             twitter_bearer_token=os.getenv('TWITTER_BEARER_TOKEN'),
             fred_api_key=os.getenv('FRED_API_KEY'),
             fmp_api_key=os.getenv('FMP_API_KEY'),
-            alpha_vantage_api_key=os.getenv('ALPHA_VANTAGE_API_KEY')  
+            alpha_vantage_api_key=os.getenv('ALPHA_VANTAGE_API_KEY'),
+            gnews_api_key=os.getenv('GNEWS_API_KEY')  
         )
     
     def validate(self):
@@ -49,7 +51,8 @@ class ApiConfig:
             self.twitter_bearer_token,
             self.fred_api_key,
             self.fmp_api_key,
-            self.alpha_vantage_api_key
+            self.alpha_vantage_api_key,
+            self.gnews_api_key
         ]):
             logging.warning("No API keys configured. Some features may not work.")
             return False
