@@ -326,26 +326,30 @@ class AdvancedStockPredictor:
         return mean_predictions, prediction_std
 
     def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
-        # last_sequence: [batch, time, features]
-        # find index of your target column (e.g. 'Close')
-        target_idx = self.feature_cols.index(self.target_col)
-        
-        # reduce to [batch, time, 1]
-        seq = last_sequence[:, :, target_idx:target_idx+1]
+        seq = last_sequence  # [batch, time, features] — features = 23
 
         ta = tf.TensorArray(tf.float32, size=steps)
+
         for i in tf.range(steps):
-            pred = model(seq)                   # [batch, 1] or [batch,1,1]
+            pred = model(seq)  # model expects [batch, time, 23]
             if len(pred.shape) == 2:
-                pred = tf.expand_dims(pred, axis=1)   # → [batch,1,1]
+                pred = tf.expand_dims(pred, axis=1)  # [batch, 1, 1]
 
-            ta = ta.write(i, tf.squeeze(pred, 1))     # store [batch,1] into ta
+            # 🔧 TILE the single prediction across the 23 feature dims
+            feat_dim = seq.shape[-1]  # 23
+            pred_full = tf.tile(pred, [1, 1, feat_dim])  # [batch, 1, 23]
 
-            # now slide *just* that 1-dim window
-            seq = tf.concat([seq[:, 1:, :], pred], axis=1)
+            # ✅ CONCAT: [batch, time - 1, 23] + [batch, 1, 23] → [batch, time, 23]
+            seq = tf.concat([seq[:, 1:, :], pred_full], axis=1)
 
-        out = ta.stack()                       # [steps, batch, 1]
-        return tf.transpose(out, [1, 0, 2])    # → [batch, steps, 1]
+            # Save the prediction (still just the target value)
+            ta = ta.write(i, tf.squeeze(pred, axis=1))  # [batch, 1] → [batch]
+
+        out = ta.stack()
+        if len(out.shape) == 2:
+            out = tf.transpose(out, [1, 0])  # [steps, batch] → [batch, steps]
+        return out
+
 
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
         """Evaluate all models and the ensemble on the test set."""

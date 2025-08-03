@@ -278,7 +278,7 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
             forecast_prices, forecast_std = predictor.predict(last_sequence, scalers, feature_cols)
             
             # Save ensemble
-            predictor.save_ensemble_metadata()
+            predictor._save_ensemble_metadata()
             
         else:
             logging.info(f"Using standard model for {symbol}")
