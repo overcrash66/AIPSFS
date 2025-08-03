@@ -200,6 +200,7 @@ class AdvancedStockPredictor:
     def train_ensemble(self, X_train, y_train, X_test, y_test, scalers, feature_cols):
         """Train an ensemble of models and select the best one."""
         self.input_shape = (X_train.shape[1], X_train.shape[2])
+        logging.info(f"Setting fixed input shape: {self.input_shape}")
         self.feature_cols = feature_cols
         self.scalers = scalers
 
@@ -300,8 +301,16 @@ class AdvancedStockPredictor:
         steps = int(steps)
         
         # Ensure proper input shape and type
-        if last_sequence.ndim == 2:
-            last_sequence = np.expand_dims(last_sequence, axis=0)
+        #if last_sequence.ndim == 2:
+        #    last_sequence = np.expand_dims(last_sequence, axis=0)
+        #last_sequence = last_sequence.astype(np.float32)
+
+        # Ensure exact input shape matches model expectations
+        if last_sequence.shape != (1, self.input_shape[0], self.input_shape[1]):
+            logging.warning(f"Reshaping input from {last_sequence.shape} to {(1, self.input_shape[0], self.input_shape[1])}")
+            last_sequence = last_sequence[:, -self.input_shape[0]:, :self.input_shape[1]]
+            last_sequence = last_sequence.reshape(1, self.input_shape[0], self.input_shape[1])
+        
         last_sequence = last_sequence.astype(np.float32)
 
         if use_best_model and self.best_model_name:
@@ -310,19 +319,15 @@ class AdvancedStockPredictor:
             predictions = self._predict_with_model(model, last_sequence, steps)
             return predictions, np.zeros_like(predictions) # No variance with one model
         
-        logging.info("Predicting using the ensemble average...")
         ensemble_predictions = []
         for name, model in self.models.items():
             try:
                 predictions = self._predict_with_model(model, last_sequence, steps)
                 
-                # Convert to numpy for size check
-                if isinstance(predictions, tf.Tensor):
-                    predictions = predictions.numpy()
-                
-                # Check if predictions are valid using tf.size
-                if tf.size(predictions).numpy() > 0:
-                    ensemble_predictions.append(predictions)
+                # Convert to numpy and check size
+                predictions_np = predictions.numpy() if isinstance(predictions, tf.Tensor) else predictions
+                if predictions_np.size > 0:
+                    ensemble_predictions.append(predictions_np)
                 else:
                     logging.warning(f"Empty predictions from {name}")
             except Exception as e:
@@ -347,28 +352,31 @@ class AdvancedStockPredictor:
 
     @tf.function(reduce_retracing=True)
     def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
-        """Recursive prediction function with consistent type handling."""
+        """Recursive prediction function with fixed shape enforcement"""
         # Ensure consistent float32 type
         seq = tf.cast(last_sequence, tf.float32)
-        batch_size = tf.shape(seq)[0]
+        batch_size = 1  # Fixed batch size
         ta = tf.TensorArray(tf.float32, size=steps)
 
+        # Get fixed dimensions from model input
+        seq_length = model.input_shape[1]
+        feat_dim = model.input_shape[2]
+        
         for i in tf.range(steps):
             pred = model(seq)
             if len(pred.shape) == 2:
                 pred = tf.expand_dims(pred, axis=1)
             
-            # Ensure consistent type
             pred = tf.cast(pred, tf.float32)
-            
-            feat_dim = tf.shape(seq)[-1]
             pred_full = tf.tile(pred, [1, 1, feat_dim])
             
-            # Maintain consistent sequence length
-            seq_slice = seq[:, 1:, :]
-            seq = tf.concat([seq_slice, pred_full], axis=1)
+            # Maintain fixed sequence length
+            seq = tf.concat([seq[:, 1:, :], pred_full], axis=1)
             
-            # Write prediction (squeeze to 1D)
+            # Enforce fixed shape
+            seq = tf.ensure_shape(seq, [batch_size, seq_length, feat_dim])
+            
+            # Write prediction
             ta = ta.write(i, tf.squeeze(pred))
 
         out = ta.stack()

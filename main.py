@@ -278,6 +278,9 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
                 last_sequence = np.expand_dims(last_sequence, axis=0)
             last_sequence = last_sequence.astype(np.float32)
             
+            # Log input shape for debugging
+            logging.info(f"Prediction input shape: {last_sequence.shape}")
+            
             forecast_prices, forecast_std = predictor.predict(
                 last_sequence=last_sequence,
                 steps=model_config.forecast_steps
