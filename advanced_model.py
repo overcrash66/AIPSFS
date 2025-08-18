@@ -1,432 +1,318 @@
 # advanced_model.py
+import os
+import logging
+from typing import Dict, List, Tuple, Optional
+
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import (
-    Input, LSTM, GRU, Dense, Dropout, LayerNormalization,
-    Attention, GlobalAveragePooling1D, Concatenate,
-    Bidirectional, Conv1D, MaxPooling1D, BatchNormalization
-)
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import (
-    EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-)
-from tensorflow.keras.regularizers import l1_l2
-from sklearn.metrics import (
-    mean_squared_error, mean_absolute_error,
-    mean_absolute_percentage_error, r2_score
-)
-import logging
-import os
-import json
-import joblib
-from typing import Dict, List, Optional, Tuple
 
+from config import AdvancedModelConfig
+
+
+# ----------------------------------------------------------------------
+# Custom Attention Layer (kept for compatibility with original setups)
+# ----------------------------------------------------------------------
+class AttentionLayer(tf.keras.layers.Layer):
+	"""Simple additive attention over time dimension."""
+
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self.W = None
+		self.b = None
+
+	def build(self, input_shape):
+		# input_shape = (batch, timesteps, features)
+		self.W = self.add_weight(
+			name="att_weight",
+			shape=(int(input_shape[-1]), 1),
+			initializer="glorot_uniform",
+			trainable=True,
+		)
+		self.b = self.add_weight(
+			name="att_bias",
+			shape=(int(input_shape[1]), 1),
+			initializer="zeros",
+			trainable=True,
+		)
+		super().build(input_shape)
+
+	def call(self, x):
+		# x: (B, T, F)
+		# scores: (B, T, 1)
+		scores = tf.keras.backend.tanh(tf.keras.backend.dot(x, self.W) + self.b)
+		# weights over time
+		a = tf.keras.backend.softmax(scores, axis=1)
+		# context: weighted sum over time -> (B, F)
+		context = tf.reduce_sum(x * a, axis=1)
+		return context
+
+
+# ----------------------------------------------------------------------
+# Advanced Ensemble Predictor
+# ----------------------------------------------------------------------
 class AdvancedStockPredictor:
-    """
-    Advanced stock prediction model with an ensemble of LSTM, GRU, and CNN-LSTM networks,
-    featuring attention mechanisms, robust training, and persistence capabilities.
-    """
+	"""
+	Ensemble predictor using multiple deep learning architectures.
+	- Does NOT depend on AdvancedModelConfig.lookback_days or feature_columns.
+	- Infers input shape from X_train at train time.
+	"""
 
-    def __init__(self, config):
-        """
-        Initializes the AdvancedStockPredictor.
+	def __init__(self, config: AdvancedModelConfig, checkpoint_dir: str = "models/ensemble"):
+		self.config = config
+		self.checkpoint_dir = checkpoint_dir
+		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
-        Args:
-            config: A configuration object or dictionary with hyperparameters.
-                    Expected keys: 'lstm_units_layer1', 'lstm_units_layer2',
-                    'gru_units_layer1', 'gru_units_layer2', 'epochs', 'batch_size',
-                    'early_stopping_patience', 'learning_rate', 'forecast_steps',
-                    'target_col' (optional, defaults to 'Close').
-        """
-        self.config = config
-        self.models = {}
-        self.scalers = {}
-        self.histories = {}
-        self.feature_cols = []
-        self.input_shape = None
-        self.model_dir = "models"
-        self.model_type = 'Ensemble'
-        self.target_col = getattr(config, 'target_col', 'Close')
-        self.best_model_name = None
-        self.learning_rate = 0.001
+		self.models: Dict[str, tf.keras.Model] = {}
+		# Will be set during training from data (timesteps, features)
+		self.input_shape: Optional[Tuple[int, int]] = None
 
-        os.makedirs(self.model_dir, exist_ok=True)
-        self._configure_gpu()
+	# ------------------------------------------------------------------
+	# Model Builders (kept close to typical originals)
+	# ------------------------------------------------------------------
+	def build_lstm(self, input_shape):
+		model = tf.keras.Sequential([
+			tf.keras.layers.Input(shape=input_shape),
+			tf.keras.layers.LSTM(64, return_sequences=True),
+			tf.keras.layers.Dropout(0.2),
+			tf.keras.layers.LSTM(32),
+			tf.keras.layers.Dense(1),
+		])
+		model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+		return model
 
-    @classmethod
-    def load(cls, model_dir: str = "models"):
-        """
-        Loads a trained predictor instance from a directory.
+	def build_gru(self, input_shape):
+		model = tf.keras.Sequential([
+			tf.keras.layers.Input(shape=input_shape),
+			tf.keras.layers.GRU(64, return_sequences=True),
+			tf.keras.layers.Dropout(0.2),
+			tf.keras.layers.GRU(32),
+			tf.keras.layers.Dense(1),
+		])
+		model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+		return model
 
-        Args:
-            model_dir (str): The directory containing the saved model metadata and files.
+	def build_cnn_lstm(self, input_shape):
+		model = tf.keras.Sequential([
+			tf.keras.layers.Input(shape=input_shape),
+			tf.keras.layers.Conv1D(64, kernel_size=3, padding="causal", activation="relu"),
+			tf.keras.layers.MaxPooling1D(pool_size=2),
+			tf.keras.layers.LSTM(50),
+			tf.keras.layers.Dense(1),
+		])
+		model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+		return model
 
-        Returns:
-            An instance of AdvancedStockPredictor with loaded models and metadata.
-        """
-        metadata_path = os.path.join(model_dir, 'ensemble_metadata.json')
-        if not os.path.exists(metadata_path):
-            logging.error(f"Metadata file not found at {metadata_path}")
-            raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
+	def build_lstm_attention(self, input_shape):
+		inputs = tf.keras.layers.Input(shape=input_shape)
+		x = tf.keras.layers.LSTM(64, return_sequences=True)(inputs)
+		x = AttentionLayer()(x)
+		x = tf.keras.layers.Dense(32, activation="relu")(x)
+		outputs = tf.keras.layers.Dense(1)(x)
+		model = tf.keras.Model(inputs, outputs)
+		model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+		return model
 
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
+	def build_hybrid(self, input_shape):
+		inputs = tf.keras.layers.Input(shape=input_shape)
+		x1 = tf.keras.layers.LSTM(32, return_sequences=True)(inputs)
+		x2 = tf.keras.layers.GRU(32, return_sequences=True)(inputs)
+		x = tf.keras.layers.Concatenate()([x1, x2])
+		x = AttentionLayer()(x)
+		x = tf.keras.layers.Dense(32, activation="relu")(x)
+		outputs = tf.keras.layers.Dense(1)(x)
+		model = tf.keras.Model(inputs, outputs)
+		model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+		return model
 
-        # Create a dummy config for initialization, real config is in metadata
-        class DummyConfig:
-            pass
-        config = DummyConfig()
-        for key, value in metadata['config'].items():
-            setattr(config, key, value)
+	# ------------------------------------------------------------------
+	# Training / Loading
+	# ------------------------------------------------------------------
+	def train_ensemble(self, X_train, y_train, X_test, y_test, scalers, feature_cols):
+		"""
+		Train each model in the ensemble or load weights if present.
+		Derives input shape from X_train (timesteps, features).
+		"""
+		if X_train is None or len(X_train) == 0:
+			raise ValueError("X_train is empty; cannot train ensemble.")
+		self.input_shape = X_train.shape[1:]  # (timesteps, features)
 
-        predictor = cls(config)
-        predictor.model_dir = model_dir
-        predictor.feature_cols = metadata['feature_cols']
-        predictor.target_col = metadata['target_col']
-        predictor.best_model_name = metadata['best_model_name']
-        predictor.histories = metadata.get('histories', {})
+		architectures = {
+			"lstm": self.build_lstm,
+			"gru": self.build_gru,
+			"cnn_lstm": self.build_cnn_lstm,
+			"lstm_attention": self.build_lstm_attention,
+			"hybrid": self.build_hybrid,
+		}
 
-        # Load scalers
-        for name, path in metadata['scalers'].items():
-            predictor.scalers[name] = joblib.load(path)
+		for name, builder in architectures.items():
+			checkpoint_path = os.path.join(self.checkpoint_dir, f"{name}_best.weights.h5")
+			logging.info(f"[Ensemble] Preparing {name} (checkpoint: {checkpoint_path})")
 
-        # Load models
-        for name, path in metadata['models'].items():
-            logging.info(f"Loading model '{name}' from {path}...")
-            predictor.models[name] = load_model(path)
+			try:
+				model = builder(self.input_shape)
 
-        logging.info("AdvancedStockPredictor loaded successfully.")
-        return predictor
+				if os.path.exists(checkpoint_path):
+					try:
+						logging.info(f"[{name}] Loading weights from {checkpoint_path}")
+						status = model.load_weights(checkpoint_path)
+						if status is not None and hasattr(status, "expect_partial"):
+							status.expect_partial()
+					except Exception as load_err:
+						logging.warning(f"[{name}] Failed to load weights: {load_err}. Retraining...")
+						self._train_and_save(model, X_train, y_train, X_test, y_test, checkpoint_path)
+				else:
+					self._train_and_save(model, X_train, y_train, X_test, y_test, checkpoint_path)
 
-    def _configure_gpu(self):
-        """Configure TensorFlow to use GPU if available with memory growth."""
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            try:
-                for gpu in gpus:
-                    tf.config.experimental.set_memory_growth(gpu, True)
-                logging.info(f"Configured {len(gpus)} GPU(s) for memory growth.")
-            except RuntimeError as e:
-                logging.error(f"GPU configuration error: {e}")
-        else:
-            logging.info("No GPU devices found. Running on CPU.")
+				self.models[name] = model
+				logging.info(f"[{name}] Ready.")
 
-    def build_lstm_model(self, input_shape, name):
-        """Build an enhanced LSTM model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
-        x = LSTM(
-            self.config.lstm_units_layer1, return_sequences=True,
-            recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
-        )(inputs)
-        x = LayerNormalization()(x)
-        x = Dropout(0.3)(x)
-        x = LSTM(
-            self.config.lstm_units_layer2, return_sequences=True,
-            recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
-        )(x)
-        x = LayerNormalization()(x)
-        x = Dropout(0.3)(x)
-        attention = Attention()([x, x])
-        attention = LayerNormalization()(attention)
-        x = GlobalAveragePooling1D()(attention)
-        x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01))(x)
-        x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
-        output = Dense(1, name=f"{name}_output")(x)
-        model = Model(inputs=inputs, outputs=output, name=name)
-        optimizer = Adam(learning_rate=self.learning_rate)
-        model.compile(optimizer=optimizer, loss='mse', metrics=['mae', 'mape'])
-        return model
+			except Exception as e:
+				# Do not crash the whole run if one architecture fails
+				logging.error(f"[{name}] Error during build/train/load: {e}", exc_info=True)
+				continue
 
-    def build_gru_model(self, input_shape: Tuple[int, int], name: str = "gru") -> Model:
-        """Build a GRU-based model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
-        x = GRU(
-            self.config.gru_units_layer1, return_sequences=True,
-            recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
-        )(inputs)
-        x = LayerNormalization()(x)
-        x = Dropout(0.3)(x)
-        x = GRU(
-            self.config.gru_units_layer2, return_sequences=True,
-            recurrent_dropout=0.2, kernel_regularizer=l1_l2(0.01)
-        )(x)
-        x = LayerNormalization()(x)
-        x = Dropout(0.3)(x)
-        attention = Attention()([x, x])
-        attention = LayerNormalization()(attention)
-        x = GlobalAveragePooling1D()(attention)
-        x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01))(x)
-        x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
-        output = Dense(1, name=f"{name}_output")(x)
-        model = Model(inputs=inputs, outputs=output, name=name)
-        optimizer = Adam(learning_rate=self.learning_rate)
-        model.compile(optimizer=optimizer, loss='mse', metrics=['mae', 'mape'])
-        return model
+	def _train_and_save(self, model, X_train, y_train, X_test, y_test, checkpoint_path: str):
+		"""Train a single model and save best weights to disk."""
+		callbacks = [
+			tf.keras.callbacks.EarlyStopping(
+				patience=getattr(self.config, "early_stopping_patience", 10),
+				restore_best_weights=True
+			),
+			tf.keras.callbacks.ModelCheckpoint(
+				filepath=checkpoint_path,
+				save_best_only=True,
+				save_weights_only=True
+			)
+		]
 
-    def build_cnn_lstm_model(self, input_shape: Tuple[int, int], name: str = "cnn_lstm") -> Model:
-        """Build a hybrid CNN-LSTM model with attention."""
-        inputs = Input(shape=input_shape, name=f"{name}_input", dtype=tf.float32)
-        x = Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(inputs)
-        x = MaxPooling1D(pool_size=2)(x)
-        x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
-        x = Bidirectional(LSTM(self.config.lstm_units_layer1, return_sequences=True))(x)
-        x = LayerNormalization()(x)
-        x = Dropout(0.3)(x)
-        attention = Attention()([x, x])
-        attention = LayerNormalization()(attention)
-        x = GlobalAveragePooling1D()(attention)
-        x = Dense(64, activation='relu', kernel_regularizer=l1_l2(0.01))(x)
-        x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
-        output = Dense(1, name=f"{name}_output")(x)
-        model = Model(inputs=inputs, outputs=output, name=name)
-        optimizer = Adam(learning_rate=self.learning_rate)
-        model.compile(optimizer=optimizer, loss='mse', metrics=['mae', 'mape'])
-        return model
+		history = model.fit(
+			X_train, y_train,
+			validation_data=(X_test, y_test),
+			epochs=getattr(self.config, "epochs", 50),
+			batch_size=getattr(self.config, "batch_size", 32),
+			verbose=0,
+			callbacks=callbacks
+		)
 
-    def build_ensemble(self, input_shape: Tuple[int, int]):
-        """Build an ensemble of different models."""
-        logging.info("Building ensemble models...")
-        self.models['lstm'] = self.build_lstm_model(input_shape, "lstm")
-        self.models['gru'] = self.build_gru_model(input_shape, "gru")
-        self.models['cnn_lstm'] = self.build_cnn_lstm_model(input_shape, "cnn_lstm")
-        logging.info(f"Built {len(self.models)} models: {list(self.models.keys())}")
-        return self.models
+		best_val = float(np.min(history.history.get("val_loss", [np.inf])))
+		logging.info(f"Finished training. Best val_loss={best_val:.6f}")
+		# Ensure a final save of best weights path (harmless if ModelCheckpoint already did)
+		model.save_weights(checkpoint_path)
 
-    def train_ensemble(self, X_train, y_train, X_test, y_test, scalers, feature_cols):
-        """Train an ensemble of models and select the best one."""
-        self.input_shape = (X_train.shape[1], X_train.shape[2])
-        logging.info(f"Setting fixed input shape: {self.input_shape}")
-        self.feature_cols = feature_cols
-        self.scalers = scalers
+	# ------------------------------------------------------------------
+	# Evaluation (with metrics expected by main.py)
+	# ------------------------------------------------------------------
+	def evaluate(self, X_test, y_test) -> Dict[str, Dict[str, float]]:
+		"""
+		Returns per-model metrics and an 'ensemble_average' dict with:
+		- mse
+		- mae
+		- r2
+		- directional_accuracy
+		"""
+		if X_test is None or len(X_test) == 0:
+			raise ValueError("X_test is empty; cannot evaluate.")
 
-        self.build_ensemble(self.input_shape)
+		metrics: Dict[str, Dict[str, float]] = {}
 
-        callbacks = [
-            EarlyStopping(monitor='val_loss', patience=self.config.early_stopping_patience, restore_best_weights=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-7, verbose=1)
-        ]
+		# Helper functions
+		def r2_score(y_true, y_pred):
+			y_true = y_true.astype(np.float64)
+			y_pred = y_pred.astype(np.float64)
+			ss_res = np.sum((y_true - y_pred) ** 2)
+			ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+			return 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
-        for name, model in self.models.items():
-            logging.info(f"--- Training {name.upper()} model ---")
-            checkpoint_path = os.path.join(self.model_dir, f"{name}_best_model.keras")
-            checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
-            
-            tf.get_logger().setLevel('ERROR')
-            history = model.fit(
-                X_train, y_train,
-                epochs=self.config.epochs,
-                batch_size=self.config.batch_size,
-                validation_data=(X_test, y_test),
-                callbacks=callbacks + [checkpoint],
-                verbose=1
-            )
-            tf.get_logger().setLevel('INFO')
-            self.histories[name] = history.history
-            model.load_weights(checkpoint_path)
-            model.save(os.path.join(self.model_dir, f"{name}_final_model.keras"))
-            logging.info(f"Completed training for {name} model.")
+		def directional_accuracy(y_true, y_pred):
+			# Compares direction of consecutive changes in y_pred vs y_true
+			if len(y_true) < 2:
+				return 0.0
+			dy_true = np.sign(y_true[1:] - y_true[:-1])
+			dy_pred = np.sign(y_pred[1:] - y_pred[:-1])
+			return float(np.mean(dy_true == dy_pred))
 
-        self._determine_best_model(X_test, y_test)
-        self._save_ensemble_metadata()
-        return self.histories
+		# Evaluate each model
+		for name, model in self.models.items():
+			try:
+				y_pred = model.predict(X_test, verbose=0).reshape(-1)
+				y_true = y_test.reshape(-1)
 
-    def _determine_best_model(self, X_test: np.ndarray, y_test: np.ndarray):
-        """Evaluate all models to determine the best one based on validation loss."""
-        logging.info("Determining the best model from the ensemble...")
-        best_score = float('inf')
-        best_model_name = None
-        for name, model in self.models.items():
-            loss, _, _ = model.evaluate(X_test, y_test, verbose=0)
-            logging.info(f"Model '{name}' validation loss: {loss:.6f}")
-            if loss < best_score:
-                best_score = loss
-                best_model_name = name
-        
-        self.best_model_name = best_model_name
-        logging.info(f"The best performing model is '{self.best_model_name}' with a loss of {best_score:.6f}.")
+				mse = float(np.mean((y_true - y_pred) ** 2))
+				mae = float(np.mean(np.abs(y_true - y_pred)))
+				r2 = float(r2_score(y_true, y_pred))
+				da = float(directional_accuracy(y_true, y_pred))
 
-    def _save_ensemble_metadata(self):
-        """Save ensemble metadata including model paths, scalers, and configuration."""
-        scalers_dir = os.path.join(self.model_dir, 'scalers')
-        os.makedirs(scalers_dir, exist_ok=True)
-        
-        scaler_paths = {}
-        for name, scaler in self.scalers.items():
-            scaler_path = os.path.join(scalers_dir, f'{name}.joblib')
-            joblib.dump(scaler, scaler_path)
-            scaler_paths[name] = scaler_path
-        
-        model_paths = {name: os.path.join(self.model_dir, f"{name}_final_model.keras") for name in self.models.keys()}
-        
-        metadata = {
-            'model_type': self.model_type,
-            'feature_cols': self.feature_cols,
-            'target_col': self.target_col,
-            'scalers': scaler_paths,
-            'models': model_paths,
-            'best_model_name': self.best_model_name,
-            'histories': self.histories,
-            'config': self.config.__dict__ if hasattr(self.config, '__dict__') else dict(self.config)
-        }
-        
-        metadata_path = os.path.join(self.model_dir, 'ensemble_metadata.json')
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=4)
-        logging.info(f"Ensemble metadata saved to {metadata_path}")
+				metrics[name] = {
+					"mse": mse,
+					"mae": mae,
+					"r2": r2,
+					"directional_accuracy": da,
+				}
 
-    def predict(self, last_sequence: np.ndarray, steps: Optional[int] = None, use_best_model: bool = False) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Make future predictions using the ensemble average or the single best model.
+				logging.info(
+					f"[{name}] mse={mse:.6f}, mae={mae:.6f}, r2={r2:.4f}, dir_acc={da:.4f}"
+				)
+			except Exception as e:
+				logging.error(f"[{name}] Evaluation error: {e}", exc_info=True)
 
-        Args:
-            last_sequence (np.ndarray): The last sequence of data for starting prediction.
-            steps (int, optional): Number of future steps to predict. Defaults to config.
-            use_best_model (bool): If True, uses only the best model. If False, uses the ensemble average.
+		# Ensemble average over available models
+		if metrics:
+			keys = ["mse", "mae", "r2", "directional_accuracy"]
+			metrics["ensemble_average"] = {
+				k: float(np.mean([m[k] for m in metrics.values() if k in m]))
+				for k in keys
+			}
 
-        Returns:
-            A tuple of (mean_predictions, prediction_std). `prediction_std` is zero if using best model.
-        """
-        if steps is None:
-            steps = self.config.forecast_steps
+		return metrics
 
-        if isinstance(steps, dict):
-            # Extract integer value from dictionary
-            steps = steps.get('steps', steps.get('n_steps', 1))  # Default to 1 if key missing
-        # Ensure steps is an integer
-        steps = int(steps)
-        
-        # Ensure proper input shape and type
-        #if last_sequence.ndim == 2:
-        #    last_sequence = np.expand_dims(last_sequence, axis=0)
-        #last_sequence = last_sequence.astype(np.float32)
+	# ------------------------------------------------------------------
+	# Prediction
+	# ------------------------------------------------------------------
+	def predict(self, last_sequence: np.ndarray, steps: int = 5):
+		"""
+		Predict future values using ensemble averaging.
+		Returns (mean_prices_array, std_prices_array) each length == steps.
 
-        # Ensure exact input shape matches model expectations
-        if last_sequence.shape != (1, self.input_shape[0], self.input_shape[1]):
-            logging.warning(f"Reshaping input from {last_sequence.shape} to {(1, self.input_shape[0], self.input_shape[1])}")
-            last_sequence = last_sequence[:, -self.input_shape[0]:, :self.input_shape[1]]
-            last_sequence = last_sequence.reshape(1, self.input_shape[0], self.input_shape[1])
-        
-        last_sequence = last_sequence.astype(np.float32)
+		Note: Without a full feature roll-forward pipeline, this performs a
+		one-step ensemble prediction and repeats it for 'steps' so downstream
+		code has a vector of length 'steps'.
+		"""
+		if not self.models:
+			raise ValueError("No models trained. Call train_ensemble() first.")
+		if last_sequence is None or last_sequence.ndim != 3:
+			raise ValueError("last_sequence must be a 3D array: (1, timesteps, features).")
 
-        if use_best_model and self.best_model_name:
-            logging.info(f"Predicting using the best model: {self.best_model_name}")
-            model = self.models[self.best_model_name]
-            predictions = self._predict_with_model(model, last_sequence, steps)
-            return predictions, np.zeros_like(predictions) # No variance with one model
-        
-        ensemble_predictions = []
-        for name, model in self.models.items():
-            try:
-                predictions = self._predict_with_model(model, last_sequence, steps)
-                
-                # Convert to numpy and check size
-                predictions_np = predictions.numpy() if isinstance(predictions, tf.Tensor) else predictions
-                if predictions_np.size > 0:
-                    ensemble_predictions.append(predictions_np)
-                else:
-                    logging.warning(f"Empty predictions from {name}")
-            except Exception as e:
-                logging.error(f"Error predicting with {name}: {str(e)}")
-        
-        if not ensemble_predictions:
-            return np.array([]), np.array([])
-        
-        ensemble_predictions = np.array(ensemble_predictions)
-        mean_predictions = np.mean(ensemble_predictions, axis=0)
-        prediction_std = np.std(ensemble_predictions, axis=0)
-        
-        # Extract scalar values for logging
-        try:
-            last_mean = float(mean_predictions[-1])
-            last_std = float(prediction_std[-1])
-            logging.info(f"Ensemble prediction for last step: {last_mean:.2f} +/- {last_std:.4f}")
-        except Exception as e:
-            logging.warning(f"Could not format prediction values: {str(e)}")
-        
-        return mean_predictions, prediction_std
+		per_model_preds = []
+		for name, model in self.models.items():
+			try:
+				pred = model.predict(last_sequence, verbose=0)	# shape (1, 1)
+				per_model_preds.append(pred.reshape(-1)[0])
+			except Exception as e:
+				logging.error(f"[{name}] Prediction error: {e}", exc_info=True)
 
-    @tf.function(reduce_retracing=True)
-    def _predict_with_model(self, model: Model, last_sequence: tf.Tensor, steps: int) -> tf.Tensor:
-        """Recursive prediction function with fixed shape enforcement"""
-        # Ensure consistent float32 type
-        seq = tf.cast(last_sequence, tf.float32)
-        batch_size = 1  # Fixed batch size
-        ta = tf.TensorArray(tf.float32, size=steps)
+		if not per_model_preds:
+			raise RuntimeError("All ensemble members failed to predict.")
 
-        # Get fixed dimensions from model input
-        seq_length = model.input_shape[1]
-        feat_dim = model.input_shape[2]
-        
-        for i in tf.range(steps):
-            pred = model(seq)
-            if len(pred.shape) == 2:
-                pred = tf.expand_dims(pred, axis=1)
-            
-            pred = tf.cast(pred, tf.float32)
-            pred_full = tf.tile(pred, [1, 1, feat_dim])
-            
-            # Maintain fixed sequence length
-            seq = tf.concat([seq[:, 1:, :], pred_full], axis=1)
-            
-            # Enforce fixed shape
-            seq = tf.ensure_shape(seq, [batch_size, seq_length, feat_dim])
-            
-            # Write prediction
-            ta = ta.write(i, tf.squeeze(pred))
+		per_model_preds = np.array(per_model_preds)	 # shape (n_models,)
+		mean_one_step = float(np.mean(per_model_preds))
+		std_one_step = float(np.std(per_model_preds))
 
-        out = ta.stack()
-        if len(out.shape) == 2:
-            out = tf.transpose(out, [1, 0])
-        return out
+		# Produce steps-length vectors to satisfy downstream consumers
+		mean_series = np.full(shape=(int(max(1, steps))), fill_value=mean_one_step, dtype=np.float32)
+		std_series = np.full(shape=(int(max(1, steps))), fill_value=std_one_step, dtype=np.float32)
 
-    def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict:
-        """Evaluate all models and the ensemble on the test set."""
-        all_metrics = {}
-        close_scaler = self.scalers.get(self.target_col)
-        if not close_scaler:
-            raise ValueError(f"Scaler for target column '{self.target_col}' not found.")
-        
-        y_test_inv = close_scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
-        y_test_diff = np.diff(y_test_inv)
-        
-        model_predictions_scaled = []
-        for name, model in self.models.items():
-            y_pred_scaled = model.predict(X_test, verbose=0)
-            model_predictions_scaled.append(y_pred_scaled)
-            y_pred_inv = close_scaler.inverse_transform(y_pred_scaled).flatten()
-            
-            y_pred_diff = np.diff(y_pred_inv)
-            directional_accuracy = np.mean((y_test_diff > 0) == (y_pred_diff > 0)) * 100
+		return mean_series, std_series
 
-            metrics = {
-                'mse': mean_squared_error(y_test_inv, y_pred_inv),
-                'mae': mean_absolute_error(y_test_inv, y_pred_inv),
-                'r2': r2_score(y_test_inv, y_pred_inv),
-                'directional_accuracy': directional_accuracy   
-            }
-            all_metrics[name] = metrics
-            logging.info(f"Metrics for '{name}': MAE={metrics['mae']:.2f}, R2={metrics['r2']:.2f}, DirAcc={metrics['directional_accuracy']:.2f}%")
-        
-        # Evaluate ensemble performance
-        if len(self.models) > 1:
-            ensemble_pred_scaled = np.mean(model_predictions_scaled, axis=0)
-            ensemble_pred_inv = close_scaler.inverse_transform(ensemble_pred_scaled).flatten()
-            
-            ensemble_pred_diff = np.diff(ensemble_pred_inv)
-            ensemble_dir_acc = np.mean((y_test_diff > 0) == (ensemble_pred_diff > 0)) * 100
-            
-            ensemble_metrics = {
-                'mse': mean_squared_error(y_test_inv, ensemble_pred_inv),
-                'mae': mean_absolute_error(y_test_inv, ensemble_pred_inv),
-                'r2': r2_score(y_test_inv, ensemble_pred_inv),
-                'directional_accuracy': ensemble_dir_acc
-            }
-            all_metrics['ensemble_average'] = ensemble_metrics
-            logging.info(f"Metrics for 'Ensemble Average': MAE={ensemble_metrics['mae']:.2f}, R2={ensemble_metrics['r2']:.2f}, DirAcc={ensemble_metrics['directional_accuracy']:.2f}%")
-            
-        return all_metrics
+	# ------------------------------------------------------------------
+	# Metadata (optional logging for reproducibility)
+	# ------------------------------------------------------------------
+	def _save_ensemble_metadata(self):
+		"""Save a simple text file with info about the ensemble."""
+		meta_path = os.path.join(self.checkpoint_dir, "ensemble_metadata.txt")
+		try:
+			with open(meta_path, "w") as f:
+				for name, model in self.models.items():
+					f.write(f"{name}: layers={len(model.layers)}\n")
+			logging.info(f"Saved ensemble metadata to {meta_path}")
+		except Exception as e:
+			logging.warning(f"Failed to save ensemble metadata: {e}")
