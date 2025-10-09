@@ -2,6 +2,14 @@
 
 A comprehensive machine learning system for predicting stock prices using LSTM neural networks with attention mechanisms, enhanced with sentiment analysis from news and social media, macroeconomic indicators, and technical analysis.
 
+## Research paper:
+
+[Research Paper](Research_Paper.md)
+
+## Report generation / result:
+
+[Stock_Report](stock_report_20250810_225150.pdf)
+
 ## Features
 
 - **Multi-Source Data Integration**: Fetches stock data from multiple sources (yFinance, Financial Modeling Prep) with automatic fallback
@@ -141,3 +149,4 @@ The system generates a PDF report containing:
   - Expected returns
   - Model performance metrics
   - Price forecast charts
+
