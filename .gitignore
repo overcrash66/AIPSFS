@@ -16,7 +16,6 @@ build/
 
 # Cache and model artifacts
 cache/
-models/
 *.7z
 
 # Reports and temp files
@@ -36,6 +35,5 @@ Thumbs.db
 start.bat
 tests.bat
 CWINDOWSsystem32cmd.exe.txt
-
-#models
-models.*
+*.h5
+/models/ensemble
