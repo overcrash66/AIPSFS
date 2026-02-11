@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from config import ModelConfig, ApiConfig, SystemConfig, AdvancedModelConfig
+from aipsfs.config import ModelConfig, ApiConfig, SystemConfig, AdvancedModelConfig
 
 
 class TestModelConfig:

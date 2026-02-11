@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_engineering import FeatureEngineer
+from aipsfs.data.engineering import FeatureEngineer
 
 
 @pytest.fixture

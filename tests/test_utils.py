@@ -7,7 +7,7 @@ import time
 import pandas as pd
 import pytest
 
-from utils import load_stock_list, retry_with_backoff, cache_result, safe_merge
+from aipsfs.utils.helpers import load_stock_list, retry_with_backoff, cache_result, safe_merge
 
 
 # ── load_stock_list ──────────────────────────────────────────────────────────

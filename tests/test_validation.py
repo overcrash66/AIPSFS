@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from validation import validate_stock_data, validate_model_input
+from aipsfs.utils.validation import validate_stock_data, validate_model_input
 
 
 class TestValidateStockData:

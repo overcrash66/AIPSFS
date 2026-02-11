@@ -9,7 +9,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-# Ensure project root is on the path so we can import modules directly
+# Ensure project root is on the path so the aipsfs package can be found
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
