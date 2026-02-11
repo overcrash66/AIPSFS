@@ -33,3 +33,5 @@ temp_*
 # OS
 .DS_Store
 Thumbs.db
+start.bat
+tests.bat
