@@ -42,7 +42,7 @@ class DataFetcher:
         self.twitter_client = None
         if api_config.twitter_bearer_token:
             try:
-                self.twitter_client = tweepy.Client(bearer_token=api_config.twitter_bearer_token, wait_on_rate_limit=True)
+                self.twitter_client = tweepy.Client(bearer_token=api_config.twitter_bearer_token, wait_on_rate_limit=False)
             except Exception as e:
                 logging.warning(f"Failed to initialize Twitter client: {str(e)}")
     
@@ -93,15 +93,32 @@ class DataFetcher:
             logging.info(f"  Index name: {df.index.name}")
             logging.info(f"  Head:\n{df.head()}")
             
-            # Handle MultiIndex columns
+            # Handle MultiIndex columns (yfinance returns ('Close','AAPL'))
             if isinstance(df.columns, pd.MultiIndex):
-                df.columns = ['_'.join(col).strip() for col in df.columns.values]
-                logging.info(f"Flattened MultiIndex columns: {df.columns.tolist()}")
+                # Drop the ticker level — keep only the metric name
+                df.columns = [col[0] for col in df.columns.values]
+                logging.info(f"Simplified MultiIndex columns: {df.columns.tolist()}")
+            
+            # Clean column names (remove spaces)
+            df.columns = [col.replace(' ', '') for col in df.columns]
+            
+            # Normalise common column-name variations to canonical OHLCV
+            canonical_map = {
+                'close': 'Close', 'open': 'Open', 'high': 'High',
+                'low': 'Low', 'volume': 'Volume', 'adjclose': 'AdjClose',
+            }
+            rename_map = {}
+            for col in df.columns:
+                lower = col.lower()
+                if lower in canonical_map and col != canonical_map[lower]:
+                    rename_map[col] = canonical_map[lower]
+            if rename_map:
+                df.rename(columns=rename_map, inplace=True)
+                logging.info(f"Renamed columns: {rename_map}")
             
             # Ensure we have a Close column
             if 'Close' not in df.columns:
-                # Try to find any column that might contain close prices
-                close_candidates = [col for col in df.columns if 'close' in col.lower()]
+                close_candidates = [c for c in df.columns if 'close' in c.lower()]
                 if close_candidates:
                     df['Close'] = df[close_candidates[0]]
                     logging.info(f"Using '{close_candidates[0]}' as 'Close' for {symbol}")
@@ -113,9 +130,6 @@ class DataFetcher:
             for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Clean column names
-            df.columns = [col.replace(' ', '') for col in df.columns]
             
             logging.info(f"Successfully fetched {len(df)} rows from yfinance for {symbol}")
             return df
@@ -408,8 +422,9 @@ class DataFetcher:
             return tweets
 
         try:
-            client = tweepy.Client(bearer_token=self.api_config.twitter_bearer_token, wait_on_rate_limit=True)
-            query = f"${symbol} OR #{symbol} lang:en -is:retweet"
+            client = tweepy.Client(bearer_token=self.api_config.twitter_bearer_token, wait_on_rate_limit=False)
+            # Use plain-text query — the $cashtag operator requires Pro/Enterprise tier
+            query = f"{symbol} stock lang:en -is:retweet"
             
             # Ensure start_date and end_date are datetime objects
             if isinstance(start_date, date) and not isinstance(start_date, datetime):
@@ -460,8 +475,8 @@ class DataFetcher:
                     else:
                         break
                 except tweepy.TooManyRequests:
-                    logging.warning("Twitter rate limit reached. Waiting...")
-                    time.sleep(60)
+                    logging.warning(f"Twitter rate limit reached for {symbol}. Returning partial data.")
+                    break  # Return whatever data we have instead of sleeping
                 except Exception as e:
                     logging.warning(f"Twitter API error for {symbol}: {str(e)}")
                     break

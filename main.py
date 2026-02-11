@@ -205,8 +205,17 @@ def process_stocks(stock_list: List[Dict], start_date: datetime, end_date: datet
 
 def analyze_stock_task(args: tuple) -> Optional[Dict]:
     """Worker function for parallel stock analysis with shape checks and memory safety."""
-    import tensorflow as tf
     import gc
+
+    # Suppress noisy TF warnings before importing tensorflow
+    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+    import tensorflow as tf
+
+    # Suppress TF retracing & optimizer-mismatch warnings in worker processes
+    tf.get_logger().setLevel('ERROR')
+
     from aipsfs.models.advanced import AdvancedStockPredictor
     from aipsfs.config import AdvancedModelConfig
     from aipsfs.models.predictor import StockPredictor
