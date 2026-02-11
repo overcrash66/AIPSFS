@@ -84,7 +84,8 @@ def main():
         feature_engineer = FeatureEngineer(
             news_api_history_days=system_config.news_api_history_days,
             min_data_rows_for_training=system_config.model.min_data_rows_for_training,
-            api_config=api_config
+            api_config=api_config,
+            data_fetcher=data_fetcher
         )
         report_generator = ReportGenerator(args.output)
 

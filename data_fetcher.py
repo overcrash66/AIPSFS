@@ -9,7 +9,6 @@ import yfinance as yf
 import requests
 import finnhub
 import tweepy
-from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from fredapi import Fred
 from functools import lru_cache
@@ -342,61 +341,6 @@ class DataFetcher:
             logging.info(f"No news found for {symbol}")
             return pd.DataFrame()
     
-    def _fetch_finnhub_news(self, symbol: str, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        """Fetch news from Finnhub API."""
-        try:
-            logging.info(f"Fetching Finnhub news for {symbol}")
-            news = self.finnhub_client.company_news(
-                symbol,
-                _from=start_date.strftime('%Y-%m-%d'),
-                to=end_date.strftime('%Y-%m-%d')
-            )
-            
-            if not news:
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(news)
-            df['date'] = pd.to_datetime(df['datetime'], unit='s').dt.date
-            df = df[['date', 'headline', 'summary', 'url', 'source']]
-            
-            logging.info(f"Fetched {len(df)} news items from Finnhub for {symbol}")
-            return df
-            
-        except Exception as e:
-            logging.warning(f"Finnhub news fetch failed for {symbol}: {str(e)}")
-            return pd.DataFrame()
-    
-    def _fetch_newsapi_news(self, symbol: str, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        """Fetch news from NewsAPI."""
-        try:
-            logging.info(f"Fetching NewsAPI for {symbol}")
-            url = (
-                f"https://newsapi.org/v2/everything?q={symbol}"
-                f"&from={start_date.strftime('%Y-%m-%d')}"
-                f"&to={end_date.strftime('%Y-%m-%d')}"
-                f"&sortBy=popularity&apiKey={self.api_config.news_api_key}"
-            )
-            
-            response = requests.get(url, timeout=10)
-            if response.status_code != 200:
-                logging.warning(f"NewsAPI error for {symbol}: {response.status_code}")
-                return pd.DataFrame()
-            
-            news = response.json().get('articles', [])
-            if not news:
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(news)
-            df['date'] = pd.to_datetime(df['publishedAt']).dt.date
-            df = df[['date', 'title', 'description', 'url', 'source']]
-            df.columns = ['date', 'headline', 'summary', 'url', 'source']
-            
-            logging.info(f"Fetched {len(df)} news items from NewsAPI for {symbol}")
-            return df
-            
-        except Exception as e:
-            logging.warning(f"NewsAPI fetch failed for {symbol}: {str(e)}")
-            return pd.DataFrame()
     
     @cache_result(cache_dir="cache/macro", expiry_days=7)
     def fetch_macro_data(self, start_date, end_date) -> pd.DataFrame:

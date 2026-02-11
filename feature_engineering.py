@@ -20,11 +20,13 @@ except LookupError:
 class FeatureEngineer:
     """Handles feature engineering for stock data."""
     
-    def __init__(self, news_api_history_days=400, min_data_rows_for_training=160, api_config=None):
+    def __init__(self, news_api_history_days=400, min_data_rows_for_training=160,
+                 api_config=None, data_fetcher=None):
         self.vader = SentimentIntensityAnalyzer()
         self.news_api_history_days = news_api_history_days
         self.min_data_rows_for_training = min_data_rows_for_training
         self.api_config = api_config
+        self.data_fetcher = data_fetcher
     
     def process_stock_data(self, symbol: str, df: pd.DataFrame, 
                           start_date_full: datetime, end_date_full: datetime) -> pd.DataFrame:
@@ -159,17 +161,13 @@ class FeatureEngineer:
     def _integrate_news_data(self, df: pd.DataFrame, symbol: str, 
                        start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Fetch and integrate news data."""
-        from data_fetcher import DataFetcher
-        
-        if not self.api_config:
+        if not self.data_fetcher:
             return df
-        
-        data_fetcher = DataFetcher(self.api_config)
         
         news_end_date = end_date.date()
         news_start_date = max(start_date.date(), news_end_date - timedelta(days=self.news_api_history_days))
         
-        news_raw = data_fetcher.fetch_news_data(symbol, news_start_date, news_end_date)
+        news_raw = self.data_fetcher.fetch_news_data(symbol, news_start_date, news_end_date)
         if news_raw.empty:
             return df
         
@@ -191,17 +189,13 @@ class FeatureEngineer:
     def _integrate_tweet_data(self, df: pd.DataFrame, symbol: str, 
                             start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Fetch and integrate tweet data."""
-        from data_fetcher import DataFetcher
-        
-        if not self.api_config or not self.api_config.twitter_bearer_token:
+        if not self.data_fetcher:
             return df
-        
-        data_fetcher = DataFetcher(self.api_config)
         
         news_end_date = end_date.date()
         news_start_date = max(start_date.date(), news_end_date - timedelta(days=self.news_api_history_days))
         
-        tweet_raw = data_fetcher.fetch_tweet_data(symbol, news_start_date, news_end_date)
+        tweet_raw = self.data_fetcher.fetch_tweet_data(symbol, news_start_date, news_end_date)
         if tweet_raw.empty:
             return df
         
@@ -223,14 +217,10 @@ class FeatureEngineer:
     def _integrate_macro_data(self, df: pd.DataFrame, 
                             start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """Fetch and integrate macroeconomic data."""
-        from data_fetcher import DataFetcher
-        
-        if not self.api_config or not self.api_config.fred_api_key:
+        if not self.data_fetcher:
             return df
         
-        data_fetcher = DataFetcher(self.api_config)
-        
-        macro_data = data_fetcher.fetch_macro_data(start_date, end_date)
+        macro_data = self.data_fetcher.fetch_macro_data(start_date, end_date)
         if macro_data.empty:
             return df
         

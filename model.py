@@ -1,4 +1,5 @@
 # model.py
+import io
 import os
 import pickle
 import numpy as np
