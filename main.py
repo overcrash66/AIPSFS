@@ -9,16 +9,16 @@ from typing import List, Dict, Optional
 import pandas as pd
 from dotenv import load_dotenv
 
-from config import ModelConfig, ApiConfig, SystemConfig
-from data_fetcher import DataFetcher
-from feature_engineering import FeatureEngineer
-from model import StockPredictor
-from reporter import ReportGenerator
-from utils import setup_logging, load_stock_list
+from aipsfs.config import ModelConfig, ApiConfig, SystemConfig
+from aipsfs.data.fetcher import DataFetcher
+from aipsfs.data.engineering import FeatureEngineer
+from aipsfs.models.predictor import StockPredictor
+from aipsfs.reporting.generator import ReportGenerator
+from aipsfs.utils.helpers import setup_logging, load_stock_list
 import numpy as np
 
-from advanced_model import AdvancedStockPredictor
-from config import AdvancedModelConfig
+from aipsfs.models.advanced import AdvancedStockPredictor
+from aipsfs.config import AdvancedModelConfig
 
 # Load environment variables
 load_dotenv()
@@ -84,7 +84,8 @@ def main():
         feature_engineer = FeatureEngineer(
             news_api_history_days=system_config.news_api_history_days,
             min_data_rows_for_training=system_config.model.min_data_rows_for_training,
-            api_config=api_config
+            api_config=api_config,
+            data_fetcher=data_fetcher
         )
         report_generator = ReportGenerator(args.output)
 
@@ -206,9 +207,9 @@ def analyze_stock_task(args: tuple) -> Optional[Dict]:
     """Worker function for parallel stock analysis with shape checks and memory safety."""
     import tensorflow as tf
     import gc
-    from advanced_model import AdvancedStockPredictor
-    from config import AdvancedModelConfig
-    from model import StockPredictor
+    from aipsfs.models.advanced import AdvancedStockPredictor
+    from aipsfs.config import AdvancedModelConfig
+    from aipsfs.models.predictor import StockPredictor
 
     stock, start_date, end_date, data_fetcher, feature_engineer, model_config, use_advanced = args
     symbol = stock.get('symbol', '').strip()

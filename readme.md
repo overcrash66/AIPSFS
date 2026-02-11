@@ -1,152 +1,212 @@
-# AI-Powered Stock Forecasting System
+# 📈 AI-Powered Stock Forecasting System
 
-A comprehensive machine learning system for predicting stock prices using LSTM neural networks with attention mechanisms, enhanced with sentiment analysis from news and social media, macroeconomic indicators, and technical analysis.
+A hybrid deep-learning ensemble that combines **LSTM**, **GRU**, and **CNN** architectures with attention mechanisms to forecast stock prices. The system integrates data from multiple sources — historical prices, news sentiment, social-media sentiment, macroeconomic indicators, and technical analysis — then generates detailed PDF reports.
 
-## Research paper:
+> **Research Paper:** [Research_Paper.md](Research_Paper.md)
 
-[Research Paper](Research_Paper.md)
+---
 
-## Report generation / result:
+## ✨ Features
 
-[Stock_Report](stock_report_20250810_225150.pdf)
+| Category | Details |
+|----------|---------|
+| **Multi-Source Data** | yFinance, Financial Modeling Prep, Alpha Vantage — with automatic fallback |
+| **Sentiment Analysis** | News headlines (NewsAPI, Finnhub, GNews) and tweets via VADER |
+| **Technical Indicators** | SMA (20/50/200), RSI, MACD, Bollinger Bands, and more |
+| **Macro Factors** | GDP, unemployment, inflation, and VIX from FRED |
+| **Model Architectures** | Standard LSTM + Attention, or advanced ensemble (LSTM, GRU, CNN-LSTM, hybrid) |
+| **PDF Reporting** | Cover page, summary table, per-stock charts and metrics |
+| **Parallel Processing** | Adaptive batch sizing with multiprocessing |
+| **Caching** | Disk-based caching of API responses with configurable expiry |
+| **Error Handling** | Retry with exponential backoff, graceful degradation |
 
-## Features
+---
 
-- **Multi-Source Data Integration**: Fetches stock data from multiple sources (yFinance, Financial Modeling Prep) with automatic fallback
-- **Sentiment Analysis**: Analyzes news headlines and tweets to gauge market sentiment
-- **Technical Indicators**: Calculates key technical indicators (SMA, RSI, MACD) for better predictions
-- **Macroeconomic Factors**: Incorporates economic indicators (GDP, unemployment, inflation, VIX)
-- **Advanced LSTM Model**: Uses an LSTM neural network with attention mechanism for accurate forecasting
-- **Comprehensive Reporting**: Generates detailed PDF reports with charts and analysis
-- **Parallel Processing**: Efficiently processes multiple stocks in parallel
-- **Caching System**: Caches API responses to reduce rate limit issues
-- **Robust Error Handling**: Implements retry mechanisms and graceful error recovery
+## 📁 Project Structure
 
-## Installation
+```
+AIPSFS/
+├── main.py                        # CLI entry point
+├── aipsfs/                        # Core package
+│   ├── config.py                  # ModelConfig, ApiConfig, SystemConfig
+│   ├── exceptions.py              # Custom exception hierarchy
+│   ├── data/
+│   │   ├── fetcher.py             # DataFetcher — multi-source data collection
+│   │   └── engineering.py         # FeatureEngineer — indicators & sentiment
+│   ├── models/
+│   │   ├── predictor.py           # StockPredictor — LSTM + Attention
+│   │   └── advanced.py            # AdvancedStockPredictor — ensemble
+│   ├── reporting/
+│   │   ├── generator.py           # ReportGenerator — PDF creation
+│   │   └── visualization.py       # Charting utilities
+│   └── utils/
+│       ├── helpers.py             # Logging, retry, caching, stock-list loader
+│       └── validation.py          # Data & model input validation
+├── tests/                         # Unit tests (pytest)
+├── stocks.csv                     # Default stock list
+├── generate_list_of_stocks.py     # Download NASDAQ/NYSE symbol lists
+├── requirements.txt               # Runtime dependencies
+├── requirements-test.txt          # Test dependencies (pytest)
+└── .env.example                   # API key template
+```
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Python 3.9 or higher
-- API keys for various services (see Configuration section)
-     
-API Key Sources 
+- **Python 3.9+**
+- At least one API key (see [Configuration](#-configuration) below)
 
-     News API: Get a free API key from https://newsapi.org/
-     Finnhub: Sign up at https://finnhub.io/  for a free API key
-     Twitter: Apply for a developer account at Twitter Developer Platform https://developer.twitter.com/
-     FRED: Get an API key from Federal Reserve Economic Data (FRED)  https://fred.stlouisfed.org/docs/api/api_key.html
-     Financial Modeling Prep: Get a free API key from Financial Modeling Prep https://site.financialmodelingprep.com/developer/docs
-     
+### 1. Clone & Create Virtual Environment
 
-
-# Setup python venv
-
-```
-py -3.10 -m venv venv
+**Windows:**
+```bash
+git clone https://github.com/overcrash66/AIPSFS.git
+cd AIPSFS
+python -m venv venv
 venv\Scripts\activate
 ```
 
-# Install dependencies
-
+**macOS / Linux:**
+```bash
+git clone https://github.com/overcrash66/AIPSFS.git
+cd AIPSFS
+python3 -m venv venv
+source venv/bin/activate
 ```
+
+### 2. Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-# Set up environment variables
+### 3. Configure API Keys
 
+Copy the template and fill in your keys:
 
-
-# Edit .env with your API keys
-Example using CMD:
-
-```
-set NEWS_API_KEY=[Add_ME]
-set FINNHUB_API_KEY=[Add_ME]
-set TWITTER_BEARER_TOKEN=[Add_ME]
-set ALPHA_VANTAGE_API_KEY=[Add_ME]
-set FMP_API_KEY=[Add_ME]
-set FRED_API_KEY=[Add_ME]
+```bash
+cp .env.example .env
 ```
 
-OR using .env FILE:
+Then edit `.env` with your keys:
 
-```
-# API Keys
-NEWS_API_KEY=your_news_api_key_here
-FINNHUB_API_KEY=your_finnhub_api_key_here
-TWITTER_BEARER_TOKEN=your_twitter_bearer_token_here
-FRED_API_KEY=your_fred_api_key_here
-FMP_API_KEY=your_fmp_api_key_here
-
-# Logging
-LOG_LEVEL=INFO
+```env
+NEWS_API_KEY=your_key_here
+FINNHUB_API_KEY=your_key_here
+TWITTER_BEARER_TOKEN=your_token_here
+FRED_API_KEY=your_key_here
+FMP_API_KEY=your_key_here
+ALPHA_VANTAGE_API_KEY=your_key_here
+GNEWS_API_KEY=your_key_here
 ```
 
-# Run the analysis
+> **Tip:** The system works with any combination of keys. More keys = richer data.
 
-```
+### 4. Run the Analysis
 
-# Use standard models
+```bash
+# Standard LSTM model
 python main.py --stocks stocks.csv
 
-#Use standard models with custom parameters
-python main.py --stocks stocks.csv --start-date 2022-01-01 --end-date 2023-12-31 --top-n 10
-
-# Use advanced ensemble models
+# Advanced ensemble models
 python main.py --stocks stocks.csv --use-advanced
 
-# Use advanced models with custom parameters
-python main.py --stocks stocks.csv --use-advanced --top-n 5 --min-return 30.0
+# Custom date range and filters
+python main.py --stocks stocks.csv --use-advanced --start-date 2022-01-01 --end-date 2024-12-31 --top-n 5 --min-return 30.0
 ```
 
-| Option       | Description                               | Default     |
-| ------------ | ----------------------------------------- | ----------- |
-| --stocks     | Path to CSV file containing stock list    | stocks.csv  |
-| --start-date | Start date for analysis (YYYY-MM-DD)      | 2 years ago |
-| --end-date   | End date for analysis (YYYY-MM-DD)        | Today       |
-| --output     | Output directory for reports              | reports     |
-| --top-n      | Number of top stocks to include in report | 10          |
-| --min-return | Minimum predicted return percentage       | 50.0        |
-| --no-cache   | Disable caching of API responses          | False       |
-| --debug      | Enable debug logging                      | False       |
+---
 
+## ⚙️ CLI Options
 
-## How It Works (Original MVP there will be a tone of new updates and changes)
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--stocks` | Path to CSV file containing stock list | `stocks.csv` |
+| `--start-date` | Start date for analysis (YYYY-MM-DD) | 2 years ago |
+| `--end-date` | End date for analysis (YYYY-MM-DD) | Today |
+| `--output` | Output directory for reports | `reports` |
+| `--top-n` | Number of top stocks to include in report | `10` |
+| `--min-return` | Minimum predicted return percentage | `50.0` |
+| `--no-cache` | Disable caching of API responses | `False` |
+| `--debug` | Enable debug logging | `False` |
+| `--use-advanced` | Use advanced ensemble models | `False` |
+
+---
+
+## 🔑 Configuration
+
+API keys are loaded from a `.env` file or environment variables. The following services are supported:
+
+| Service | Key Variable | Get a Key |
+|---------|-------------|-----------|
+| NewsAPI | `NEWS_API_KEY` | [newsapi.org](https://newsapi.org/) |
+| Finnhub | `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) |
+| Twitter | `TWITTER_BEARER_TOKEN` | [developer.twitter.com](https://developer.twitter.com/) |
+| FRED | `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| Financial Modeling Prep | `FMP_API_KEY` | [financialmodelingprep.com](https://site.financialmodelingprep.com/developer/docs) |
+| Alpha Vantage | `ALPHA_VANTAGE_API_KEY` | [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
+| GNews | `GNEWS_API_KEY` | [gnews.io](https://gnews.io/) |
+
+---
+
+## 🧪 Testing
+
+Run the full test suite:
+
+```bash
+# Using pytest directly
+python -m pytest tests/ -v
+
+```
+
+Install test dependencies separately:
+
+```bash
+pip install -r requirements-test.txt
+```
+
+---
+
+## 🔄 How It Works
 
 ### 1. Data Collection
-- The system fetches historical stock data from multiple sources with automatic fallback mechanisms.
+The system fetches historical stock data from multiple sources with automatic fallback mechanisms. News, tweets, and macroeconomic data are collected and cached.
 
 ### 2. Feature Engineering
 - Calculates technical indicators (SMA, RSI, MACD)
-- Fetches and analyzes news articles for sentiment
-- Collects and processes tweets for social sentiment
-- Incorporates macroeconomic indicators
+- Analyzes news and tweet sentiment using VADER
+- Integrates macroeconomic indicators from FRED
+- Scales and sequences data for model input
 
 ### 3. Model Training
-- Prepares sequences for LSTM input
-- Builds an LSTM model with attention mechanism
-- Trains the model with early stopping to prevent overfitting
-- Evaluates model performance with multiple metrics
+- **Standard mode:** LSTM with attention mechanism, trained with early stopping
+- **Advanced mode:** Ensemble of LSTM, GRU, CNN-LSTM, and hybrid architectures with checkpointing
 
 ### 4. Forecasting
-- Generates future price predictions
-- Calculates expected returns
-- Filters top-performing stocks based on predicted returns
+Generates multi-step price predictions, calculates expected returns, and ranks stocks by predicted performance.
 
 ### 5. Reporting
-- Creates comprehensive PDF reports
-- Includes summary tables and price charts
-- Provides detailed analysis for each stock
+Creates comprehensive PDF reports with cover pages, summary tables, price forecast charts, and per-stock analysis sections.
 
-## Example Output
+---
+
+## 📄 Example Output
 
 The system generates a PDF report containing:
 
 - Cover page with analysis period
 - Summary table of top-performing stocks
-- Detailed analysis for each stock including:
+- Detailed analysis for each stock:
   - Current and predicted prices
   - Expected returns
-  - Model performance metrics
+  - Model performance metrics (MAE, RMSE, R²)
   - Price forecast charts
 
+---
+
+## 📜 License
+
+This project is provided as-is for educational and research purposes.
